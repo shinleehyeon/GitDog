@@ -32,6 +32,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Character toggle (goose/dachshund).
     private var statusItem: NSStatusItem?
 
+    // Gipet — GitHub streak popover + commit watcher.
+    private let gipet = MainStatusItemMenuManager()
+    private var gooseMenu: NSMenu?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Register the gipet:// scheme so the GitHub OAuth callback reaches us.
+        AppDeeplinkHandler.shared.register()
+    }
+
+    // Modern URL delivery path (preferred over the raw Apple Event).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme == GipetGitHub.callbackScheme {
+            GitHubTokenRequester.shared.handleCallback(url)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         GooseConfig.settings = MacGooseSettings()
         // No copy step — the goose reads straight from the project Memes/ and Notes/ dirs.
@@ -44,8 +60,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                notesDirectory: AppDelegate.ProjectNotesDir)
         NSApplication.shared.activate(ignoringOtherApps: true)
         installStatusItem()
+        installGipet()
         applyCharacterChoice()
         installGlobalHotkey()
+    }
+
+    private func installGipet() {
+        gipet.configurePopover()
+        // No commit today → send the dog to fetch an image.
+        gipet.onNoCommitNudge = { [weak self] in
+            self?.Goose?.SetTask(.CollectWindow_Meme, honck: false)
+        }
+        // "Dog menu…" inside the popover pops the classic goose menu at the cursor.
+        gipet.onOpenGooseMenu = { [weak self] in
+            self?.popupGooseMenuAtCursor()
+        }
+        gipet.start()
     }
 
     private func installGlobalHotkey() {
@@ -53,19 +83,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // kVK_ANSI_G = 5  → Cmd+Ctrl+G   → pop the menu near the cursor
         // kVK_ANSI_M = 46 → Cmd+Ctrl+M   → force the goose to fetch a meme right now
         HotkeyManager.shared.register(keyCode: 5,  modifiers: cmdCtrl) { [weak self] in
-            self?.popupMenuAtCursor()
+            self?.popupGooseMenuAtCursor()
         }
         HotkeyManager.shared.register(keyCode: 46, modifiers: cmdCtrl) { [weak self] in
             self?.Goose?.SetTask(.CollectWindow_Meme, honck: false)
         }
-    }
-
-    private func popupMenuAtCursor() {
-        guard let menu = statusItem?.menu else { return }
-        // Accessory apps don't get focus by default; activate so the menu can take input.
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        let mouse = NSEvent.mouseLocation        // screen coords, bottom-left origin
-        menu.popUp(positioning: nil, at: mouse, in: nil)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
@@ -136,14 +158,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit",       action: #selector(menuQuit), keyEquivalent: "q").target = self
-        item.menu = menu
+        // Left-click opens the Gipet popover; right-click shows the goose menu.
+        self.gooseMenu = menu
+        if let button = item.button {
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
         self.statusItem = item
         refreshTitle()
     }
 
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        let isRight = NSApp.currentEvent?.type == .rightMouseUp
+            || NSApp.currentEvent?.modifierFlags.contains(.control) == true
+        if isRight {
+            showGooseMenu(from: sender)
+        } else {
+            gipet.toggle(from: sender)
+        }
+    }
+
+    private func showGooseMenu(from button: NSStatusBarButton) {
+        guard let menu = gooseMenu, let item = statusItem else { return }
+        item.menu = menu                    // attach so the button draws it...
+        button.performClick(nil)            // ...then pop it,
+        item.menu = nil                     // and detach so left-click stays ours.
+    }
+
+    private func popupGooseMenuAtCursor() {
+        guard let menu = gooseMenu else { return }
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
     private func refreshTitle() {
         statusItem?.button?.title = CharacterSettings.shared.current == .goose ? "🪿" : "🐕"
-        statusItem?.menu?.items.forEach { mi in
+        gooseMenu?.items.forEach { mi in
             if let raw = mi.representedObject as? String,
                let kind = CharacterKind(rawValue: raw) {
                 mi.state = (CharacterSettings.shared.current == kind) ? .on : .off
