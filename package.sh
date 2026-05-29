@@ -65,6 +65,10 @@ echo "✓ Built $APP"
 echo "  gipet:// is now registered. Move Gipet.app to /Applications if you like."
 
 if [ "${1:-}" = "--run" ]; then
-    echo "▸ Launching…"
-    open "$APP"
+    echo "▸ Restarting Gipet…"
+    # If an existing Gipet process is alive, "open" only activates it and
+    # code changes won't load. Kill first, then force a new app instance.
+    pkill -f "$APP/Contents/MacOS/$EXE_NAME" 2>/dev/null || true
+    sleep 0.3
+    open -n "$APP"
 fi

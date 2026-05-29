@@ -24,7 +24,8 @@ final class CharacterSettings {
         get {
             if let raw = UserDefaults.standard.string(forKey: key),
                let kind = CharacterKind(rawValue: raw) { return kind }
-            return .goose
+            // Gipet.app first launch default should be dachshund.
+            return .chick
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: key)
