@@ -134,13 +134,18 @@ final class MacintoshGoose: Goose {
         g.translateBy(x: 0, y: -(Window.contentView?.frame.height ?? 0))
         var flag = false
         let timeNow = Time.time
-        let num = timeNow - 12
+        let heartFootmarkColor = CGColor(red: 0.92, green: 0.18, blue: 0.30, alpha: 1)
         for i in 0..<footMarks.count {
             let markTime = footMarks[i].time
-            if markTime <= timeNow && markTime > num {
-                let num2 = markTime + 8.5
-                let num3 = SamMath.Lerp(3, 0, SamMath.Clamp(timeNow - num2, 0, 1) / 1)
-                FillCircleFromCenter(g, settings.GooseMud, footMarks[i].position, Int(num3))
+            let markLifetime = footMarks[i].lifetime
+            let fadeStart = markTime + markLifetime
+            let fadeEnd = fadeStart + FootMark.ShrinkTime
+            if markTime <= timeNow && timeNow <= fadeEnd {
+                let fadeProgress = SamMath.Clamp((timeNow - fadeStart) / FootMark.ShrinkTime, 0, 1)
+                let radius = SamMath.Lerp(3, 0, fadeProgress)
+                let defaultFootmarkColor = shadowPattern ?? NSColor.lightGray.cgColor
+                let markColor = footMarks[i].isHeartTrail ? heartFootmarkColor : defaultFootmarkColor
+                FillCircleFromCenter(g, markColor, footMarks[i].position, Int(radius))
                 flag = true
             }
         }

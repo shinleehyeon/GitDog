@@ -8,6 +8,9 @@ class Goose {
     // true  -> AI task picker can choose CollectWindow_* tasks
     // false -> collect windows run only when explicitly requested (hotkey/menu)
     private let allowAutomaticCollectWindows: Bool = false
+    private let heartFootmarkLifetime: Float = 200
+    // Re-enable occasional mouse nabbing, but keep it infrequent.
+    private let allowOccasionalNabMouse: Bool = true
     enum SoundEffect {
         case CHOMP
         case MudSquith
@@ -29,6 +32,7 @@ class Goose {
         case CollectWindow_Donate
         case CollectWindow_DONOTSET
         case TrackMud
+        case HeartTrail
         case Count
     }
 
@@ -132,6 +136,16 @@ class Goose {
         }
     }
 
+    struct Task_HeartTrail {
+        var startTime: Float = 0
+        var duration: Float = 12
+        var center: Vector2 = .zero
+        var xScale: Float = 7.5
+        var yScale: Float = 6.0
+        var isTracing: Bool = false
+        var startPoint: Vector2 = .zero
+    }
+
     struct Rig {
         static let UnderBodyRadius: Int = 15
         static let UnderBodyLength: Int = 7
@@ -220,6 +234,8 @@ class Goose {
     private var tmpSize: CGSize = .zero
     private var taskCollectWindowInfo = Task_CollectWindow()
     private var taskTrackMudInfo = Task_TrackMud()
+    private var taskHeartTrailInfo = Task_HeartTrail()
+    private var nextAllowedNabMouseTime: Float = 0
 
     // Heavily meme-biased — user wanted the goose to bring memes much more often.
     // CanAttackAtRandom defaults to false, so the NabMouse slots are skipped by
@@ -307,6 +323,7 @@ class Goose {
     }
 
     func Tick() {
+        let prevPosition = position
         SetCursorClip(.zero)
         if currentTask != .NabMouse && IsLeftMouseDown() && !lastFrameMouseButtonPressed
             && Vector2.Distance(position + Vector2(0, 14), GetCursorPosition()) < 30 {
@@ -323,6 +340,15 @@ class Goose {
         }
         velocity += Vector2.Normalize(targetPos - position) * currentAcceleration * (1.0 / 120.0)
         position += velocity * inverseFrameRate
+        if currentTask == .HeartTrail && taskHeartTrailInfo.isTracing {
+            position = targetPos
+            velocity = .zero
+            let delta = position - prevPosition
+            if Vector2.Magnitude(delta) > 0.001 {
+                direction = atan2(delta.y, delta.x) * (180 / .pi)
+            }
+            sanitizeFeetForHeartTrail()
+        }
         SolveFeet()
         _ = Vector2.Magnitude(velocity)
         let num: Float = (overrideExtendNeck || (currentSpeed >= 200)) ? 1 : 0
@@ -487,17 +513,58 @@ class Goose {
         }
     }
 
-    private func ChooseNextTask() {
-        if !GooseConfig.settings.CanAttackAtRandom && Time.time < GooseConfig.settings.FirstWanderTimeSeconds + 1 {
-            SetTask(.TrackMud)
+    private func RunHeartTrail() {
+        SetSpeed(.Charge)
+        if !taskHeartTrailInfo.isTracing {
+            // First, run to the heart start point naturally (no teleport).
+            targetPos = taskHeartTrailInfo.startPoint
+            if Vector2.Distance(position, taskHeartTrailInfo.startPoint) <= 20 {
+                taskHeartTrailInfo.isTracing = true
+                taskHeartTrailInfo.startTime = Time.time
+                targetPos = heartPoint(progress: 0, center: taskHeartTrailInfo.center,
+                                       xScale: taskHeartTrailInfo.xScale, yScale: taskHeartTrailInfo.yScale)
+            }
             return
         }
-        var gooseTask = gooseTaskWeightedList[taskPickerDeck.Next()]
-        while (!GooseConfig.settings.CanAttackAtRandom && gooseTask == .NabMouse)
-            || (!allowAutomaticCollectWindows && isAutomaticCollectWindowTask(gooseTask)) {
-            gooseTask = gooseTaskWeightedList[taskPickerDeck.Next()]
+        let elapsed = Time.time - taskHeartTrailInfo.startTime
+        if elapsed >= taskHeartTrailInfo.duration {
+            SetTask(.Wander, honck: false)
+            return
         }
-        SetTask(gooseTask)
+        let p = elapsed / taskHeartTrailInfo.duration
+        targetPos = heartPoint(progress: p, center: taskHeartTrailInfo.center,
+                               xScale: taskHeartTrailInfo.xScale, yScale: taskHeartTrailInfo.yScale)
+    }
+
+    private func ChooseNextTask() {
+        if !GooseConfig.settings.CanAttackAtRandom && Time.time < GooseConfig.settings.FirstWanderTimeSeconds + 1 {
+            // Keep startup in normal random wander; avoid forced offscreen run.
+            SetTask(.Wander, honck: false)
+            return
+        }
+        if allowOccasionalNabMouse && Time.time >= nextAllowedNabMouseTime {
+            // Low probability gate + long cooldown so it happens sometimes, not often.
+            if SamMath.RandomRange(0, 1) < 0.06 {
+                nextAllowedNabMouseTime = Time.time + SamMath.RandomRange(45, 90)
+                SetTask(.NabMouse, honck: false)
+                return
+            }
+            // Even when not triggered, push next check out a bit to avoid repeated rolls.
+            nextAllowedNabMouseTime = Time.time + 10
+        }
+        // Prevent hangs: if all weighted tasks are filtered out, fallback to Wander.
+        for _ in 0..<(gooseTaskWeightedList.count * 3) {
+            let gooseTask = gooseTaskWeightedList[taskPickerDeck.Next()]
+            let blockedByAttackSetting = !GooseConfig.settings.CanAttackAtRandom && gooseTask == .NabMouse
+            let blockedByCollectSetting = !allowAutomaticCollectWindows && isAutomaticCollectWindowTask(gooseTask)
+            let blockedTrackMud = gooseTask == .TrackMud
+            if blockedByAttackSetting || blockedByCollectSetting || blockedTrackMud {
+                continue
+            }
+            SetTask(gooseTask)
+            return
+        }
+        SetTask(.Wander, honck: false)
     }
 
     func CreateImageForm() -> IMovableForm { fatalError("abstract") }
@@ -548,7 +615,25 @@ class Goose {
                 }
             }
         case .TrackMud:
-            taskTrackMudInfo = Task_TrackMud()
+            // Disable TrackMud so offscreen travel happens only for image/note collect.
+            SetTask(.Wander, honck: false)
+        case .HeartTrail:
+            taskHeartTrailInfo = Task_HeartTrail()
+            let w = GetMainWindowWidth()
+            let h = GetMainWindowHeight()
+            // Heart equation spans about x:[-16,16], y:[-17,13].
+            // Auto-fit with margins so the whole curve stays visible.
+            let xScaleLimit = max(4, (w - 180) / 32)
+            let yScaleLimit = max(4, (h - 240) / 30)
+            let scale = min(xScaleLimit, yScaleLimit)
+            taskHeartTrailInfo.xScale = scale
+            taskHeartTrailInfo.yScale = scale
+            // Center the heart in screen space.
+            taskHeartTrailInfo.center = Vector2(w * 0.5, h * 0.56)
+            taskHeartTrailInfo.isTracing = false
+            taskHeartTrailInfo.startPoint = heartPoint(progress: 0, center: taskHeartTrailInfo.center,
+                                                       xScale: taskHeartTrailInfo.xScale, yScale: taskHeartTrailInfo.yScale)
+            targetPos = taskHeartTrailInfo.startPoint
         case .Count:
             break
         }
@@ -560,6 +645,7 @@ class Goose {
         case .NabMouse:                RunNabMouse()
         case .CollectWindow_DONOTSET:  RunCollectWindow()
         case .TrackMud:                RunTrackMud()
+        case .HeartTrail:              RunHeartTrail()
         case .CollectWindow_Meme, .CollectWindow_Notepad, .CollectWindow_Donate, .Count:
             break
         }
@@ -569,6 +655,15 @@ class Goose {
         task == .CollectWindow_Meme
             || task == .CollectWindow_Notepad
             || task == .CollectWindow_Donate
+    }
+
+    private func heartPoint(progress p: Float, center: Vector2, xScale: Float, yScale: Float) -> Vector2 {
+        let theta = p * 2 * Float.pi
+        let sinT = sin(theta)
+        let cosT = cos(theta)
+        let x = 16 * sinT * sinT * sinT
+        let y = 13 * cosT - 5 * cos(2 * theta) - 2 * cos(3 * theta) - cos(4 * theta)
+        return center + Vector2(x * xScale, -y * yScale)
     }
 
     private func SetTargetOffscreen(canExitTop: Bool = false) -> Task_CollectWindow.ScreenDirection {
@@ -613,9 +708,9 @@ class Goose {
             lFootPos = b
             lFootMoveTimeStart = -1
             PlaySound(.Pat)
-            if Time.time < trackMudEndTime {
-                AddFootMark(lFootPos)
-            }
+            AddFootMark(lFootPos,
+                        lifetime: currentTask == .HeartTrail ? heartFootmarkLifetime : FootMark.Lifetime,
+                        isHeartTrail: currentTask == .HeartTrail)
         } else {
             if rFootMoveTimeStart <= 0 { return }
             let b2 = footHome2 + rFootMoveDir * 0.4 * 5
@@ -623,9 +718,9 @@ class Goose {
                 rFootPos = b2
                 rFootMoveTimeStart = -1
                 PlaySound(.Pat)
-                if Time.time < trackMudEndTime {
-                    AddFootMark(rFootPos)
-                }
+                AddFootMark(rFootPos,
+                            lifetime: currentTask == .HeartTrail ? heartFootmarkLifetime : FootMark.Lifetime,
+                            isHeartTrail: currentTask == .HeartTrail)
             } else {
                 let p2 = (Time.time - rFootMoveTimeStart) / stepTime
                 rFootPos = Vector2.Lerp(rFootMoveOrigin, b2, Easings.CubicEaseInOut(p2))
@@ -639,16 +734,35 @@ class Goose {
         return position + vector * 6
     }
 
-    private func AddFootMark(_ markPos: Vector2) {
-        // Delay footprint appearance by 0.5 seconds after the step lands.
-        footMarks[footMarkIndex].time = Time.time + 0.5
+    private func AddFootMark(_ markPos: Vector2,
+                             lifetime: Float = FootMark.Lifetime,
+                             isHeartTrail: Bool = false) {
+        // Heart trail marks should appear immediately; normal marks keep delay.
+        footMarks[footMarkIndex].time = isHeartTrail ? Time.time : (Time.time + 0.5)
         footMarks[footMarkIndex].position = markPos
+        footMarks[footMarkIndex].lifetime = lifetime
+        footMarks[footMarkIndex].isHeartTrail = isHeartTrail
         footMarkIndex += 1
         hasFootmarks = true
         if footMarkIndex >= footMarks.count {
             footMarkIndex = 0
         }
     }
+
+    private func sanitizeFeetForHeartTrail() {
+        let leftHome = GetFootHome(rightFoot: false)
+        let rightHome = GetFootHome(rightFoot: true)
+        // Heart mode teleports position; if a foot drifts too far, snap it back once.
+        if Vector2.Distance(lFootPos, leftHome) > 24 {
+            lFootPos = leftHome
+            lFootMoveTimeStart = -1
+        }
+        if Vector2.Distance(rFootPos, rightHome) > 24 {
+            rFootPos = rightHome
+            rFootMoveTimeStart = -1
+        }
+    }
+
 
     func UpdateRig() {
         let vector = Vector2(Float(Int(position.x)), Float(Int(position.y)))

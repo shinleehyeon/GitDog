@@ -8,4 +8,6 @@ struct FootMark {
 
     var position: Vector2 = .zero
     var time: Float = 0
+    var lifetime: Float = FootMark.Lifetime
+    var isHeartTrail: Bool = false
 }

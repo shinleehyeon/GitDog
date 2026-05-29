@@ -126,6 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(withTitle: "Honk",       action: #selector(menuHonk),       keyEquivalent: "h").target = self
         menu.addItem(withTitle: "Nab Mouse",  action: #selector(menuNabMouse),   keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Wander",     action: #selector(menuWander),     keyEquivalent: "w").target = self
+        menu.addItem(withTitle: "Heart Trail", action: #selector(menuHeartTrail), keyEquivalent: "")
+            .target = self
         menu.addItem(withTitle: "Track Mud",  action: #selector(menuTrackMud),   keyEquivalent: "m").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Open Memes", action: #selector(openMemesFolder(_:)), keyEquivalent: "")
@@ -164,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func menuHonk()       { Goose?.PlaySound(.HONCC) }
     @objc private func menuNabMouse()   { Goose?.SetTask(.NabMouse, honck: false) }
     @objc private func menuWander()     { Goose?.SetTask(.Wander,   honck: false) }
+    @objc private func menuHeartTrail() { Goose?.SetTask(.HeartTrail, honck: false) }
     @objc private func menuTrackMud()   { Goose?.SetTask(.TrackMud, honck: false) }
     @objc private func menuQuit()       { NSApp.terminate(nil) }
 }
