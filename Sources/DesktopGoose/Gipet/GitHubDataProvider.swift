@@ -26,19 +26,13 @@ final class GitHubDataProvider {
 
     /// Fetch the last ~year of contribution days for `login`.
     func fetchContributions(login: String) async throws -> [ContributionDay] {
-        var comps = URLComponents(string: "https://github.com/users/\(login)/contributions")!
-        // Ask for a full trailing year so streak/total math has enough history.
-        let cal = Calendar.current
-        let to = Date()
-        let from = cal.date(byAdding: .day, value: -370, to: to) ?? to
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.dateFormat = "yyyy-MM-dd"
-        comps.queryItems = [
-            URLQueryItem(name: "from", value: fmt.string(from: from)),
-            URLQueryItem(name: "to",   value: fmt.string(from: to)),
-        ]
-        guard let url = comps.url else { throw APIError.badURL }
+        // The bare endpoint returns the rolling trailing year (ending today),
+        // exactly like the graph on github.com. Passing from/to that cross a
+        // year boundary makes GitHub clamp to a calendar year (padding future
+        // days as empty), so we don't.
+        guard let url = URL(string: "https://github.com/users/\(login)/contributions") else {
+            throw APIError.badURL
+        }
         let html = try await api.text(url)
         let days = Self.parseContributions(html: html)
         guard !days.isEmpty else { throw APIError.decode("contributions must be not empty") }

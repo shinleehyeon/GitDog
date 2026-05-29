@@ -67,9 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func installGipet() {
         gipet.configurePopover()
-        // No commit today → send the dog to fetch an image.
+        // No commit today → send the dog to fetch something: randomly an
+        // image (Memes/) or a note (Notes/).
         gipet.onNoCommitNudge = { [weak self] in
-            self?.Goose?.SetTask(.CollectWindow_Meme, honck: false)
+            let task: Goose.GooseTask = Bool.random() ? .CollectWindow_Meme : .CollectWindow_Notepad
+            self?.Goose?.SetTask(task, honck: false)
         }
         // "Dog menu…" inside the popover pops the classic goose menu at the cursor.
         gipet.onOpenGooseMenu = { [weak self] in

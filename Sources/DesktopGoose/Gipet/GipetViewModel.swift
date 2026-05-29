@@ -15,6 +15,7 @@ final class GipetViewModel: ObservableObject {
     @Published var avatar: NSImage?
     @Published var isLoading = false
     @Published var errorText: String?
+    @Published var lastUpdated: Date?
 
     var isSignedIn: Bool { TokenStore.shared.isSignedIn }
 
@@ -87,6 +88,7 @@ final class GipetViewModel: ObservableObject {
                 self.days = d
                 self.stats = s
                 self.isLoading = false
+                self.lastUpdated = Date()
             }
             await loadAvatar(resolvedUser.avatarURL)
         } catch {
