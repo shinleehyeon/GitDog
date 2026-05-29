@@ -1,0 +1,35 @@
+// Local addition (not part of the .NET source) — character asset toggle.
+
+import Foundation
+
+enum CharacterKind: String, CaseIterable, Identifiable {
+    case goose
+    case chick
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .goose: return "Goose 🪿"
+        case .chick: return "Dachshund 🐕"
+        }
+    }
+}
+
+final class CharacterSettings {
+    static let shared = CharacterSettings()
+    private let key = "DesktopGoose.character"
+
+    var current: CharacterKind {
+        get {
+            if let raw = UserDefaults.standard.string(forKey: key),
+               let kind = CharacterKind(rawValue: raw) { return kind }
+            return .goose
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: key)
+        }
+    }
+
+    private init() {}
+}

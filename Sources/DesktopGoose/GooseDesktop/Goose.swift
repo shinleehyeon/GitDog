@@ -1,0 +1,671 @@
+// Port of: GooseDesktop/Goose.cs
+
+import Foundation
+import CoreGraphics
+
+class Goose {
+    // Manual-only collect-window mode:
+    // true  -> AI task picker can choose CollectWindow_* tasks
+    // false -> collect windows run only when explicitly requested (hotkey/menu)
+    private let allowAutomaticCollectWindows: Bool = false
+    enum SoundEffect {
+        case CHOMP
+        case MudSquith
+        case HONCC
+        case Pat
+    }
+
+    enum SpeedTiers {
+        case Walk
+        case Run
+        case Charge
+    }
+
+    enum GooseTask: Int {
+        case Wander
+        case NabMouse
+        case CollectWindow_Meme
+        case CollectWindow_Notepad
+        case CollectWindow_Donate
+        case CollectWindow_DONOTSET
+        case TrackMud
+        case Count
+    }
+
+    struct Task_Wander {
+        static let MinPauseTime: Float = 1
+        static let MaxPauseTime: Float = 2
+        static let GoodEnoughDistance: Float = 20
+
+        var wanderingStartTime: Float = 0
+        var wanderingDuration: Float = 0
+        var pauseStartTime: Float = 0
+        var pauseDuration: Float = 0
+
+        static func GetRandomPauseDuration() -> Float {
+            return 1 + SamMath.RandomRange(0, 1) * 1
+        }
+
+        static func GetRandomWanderDuration() -> Float {
+            if Time.time < 1 {
+                return GooseConfig.settings.FirstWanderTimeSeconds
+            }
+            return SamMath.RandomRange(GooseConfig.settings.MinWanderingTimeSeconds,
+                                       GooseConfig.settings.MaxWanderingTimeSeconds)
+        }
+
+        static func GetRandomWalkTime() -> Float {
+            return SamMath.RandomRange(1, 6)
+        }
+    }
+
+    struct Task_NabMouse {
+        enum Stage {
+            case SeekingMouse
+            case DraggingMouseAway
+            case Decelerating
+        }
+
+        var currentStage: Stage = .SeekingMouse
+        var dragToPoint: Vector2 = .zero
+        var grabbedOriginalTime: Float = 0
+        var chaseStartTime: Float = 0
+        var originalVectorToMouse: Vector2 = .zero
+
+        static let MouseGrabDistance: Float = 15
+        static let MouseSuccTime: Float = 0.06
+        static let MouseDropDistance: Float = 30
+        static let MinRunTime: Float = 2
+        static let MaxRunTime: Float = 4
+        static let GiveUpTime: Float = 9
+
+        static let StruggleRange = Vector2(3, 3)
+    }
+
+    protocol IMovableForm: AnyObject {
+        var Width: Int { get }
+        var Height: Int { get }
+        func Show(_ closeAction: @escaping () -> Void)
+        func SetPosition(_ point: CGPoint)
+    }
+
+    struct Task_CollectWindow {
+        enum Stage {
+            case WalkingOffscreen
+            case WaitingToBringWindowBack
+            case DraggingWindowBack
+        }
+
+        enum ScreenDirection {
+            case Left
+            case Top
+            case Right
+        }
+
+        var mainForm: IMovableForm?
+        var stage: Stage = .WalkingOffscreen
+        var secsToWait: Float = 0
+        var waitStartTime: Float = 0
+        var screenDirection: ScreenDirection = .Left
+        var windowOffsetToBeak: Vector2 = .zero
+
+        static func GetWaitTime() -> Float {
+            return SamMath.RandomRange(2, 3.5)
+        }
+    }
+
+    struct Task_TrackMud {
+        enum Stage {
+            case DecideToRun
+            case RunningOffscreen
+            case RunningWandering
+        }
+
+        static let DurationToRunAmok: Float = 2
+
+        var nextDirChangeTime: Float = 0
+        var timeToStopRunning: Float = 0
+        var stage: Stage = .DecideToRun
+
+        static func GetDirChangeInterval() -> Float {
+            return 100
+        }
+    }
+
+    struct Rig {
+        static let UnderBodyRadius: Int = 15
+        static let UnderBodyLength: Int = 7
+        static let UnderBodyElevation: Int = 9
+        var underbodyCenter: Vector2 = .zero
+
+        static let BodyRadius: Int = 22
+        static let BodyLength: Int = 11
+        static let BodyElevation: Int = 14
+        var bodyCenter: Vector2 = .zero
+
+        static let NeccRadius: Int = 13
+        static let NeccHeight1: Int = 20
+        static let NeccExtendForward1: Int = 3
+        static let NeccHeight2: Int = 10
+        static let NeccExtendForward2: Int = 16
+        var neckLerpPercent: Float = 0
+        var neckCenter: Vector2 = .zero
+        var neckBase: Vector2 = .zero
+        var neckHeadPoint: Vector2 = .zero
+
+        static let HeadRadius1: Int = 15
+        static let HeadLength1: Int = 3
+        static let HeadRadius2: Int = 10
+        static let HeadLength2: Int = 5
+        var head1EndPoint: Vector2 = .zero
+        var head2EndPoint: Vector2 = .zero
+
+        static let EyeRadius: Int = 2
+        static let EyeElevation: Int = 3
+        static let IPD: Float = 5
+        static let EyesForward: Float = 5
+    }
+
+    var inverseFrameRate: Float = 1.0 / 120.0
+
+    private static let possiblePhrases: [String] = [
+        "am goose hjonk",
+        "good work",
+        "nsfdafdsaafsdjl\r\nasdas       sorry\r\nhard to type withh feet",
+        "i cause problems on purpose",
+        "\"peace was never an option\"\r\n   -the goose (me)",
+        "\r\n\r\n  >o) \r\n    (_>"
+    ]
+
+    private static let textIndices = Deck(possiblePhrases.count)
+
+    var hasFootmarks: Bool = false
+
+    var position: Vector2 = Vector2(300, 300)
+    var velocity: Vector2 = Vector2(0, 0)
+    var direction: Float = 90
+    var targetDirection: Vector2 = .zero
+
+    var overrideExtendNeck: Bool = false
+
+    var targetPos: Vector2 = Vector2(300, 300)
+    var targetDir: Float = 90
+
+    var currentSpeed: Float = 80
+    var currentAcceleration: Float = 1300
+    var stepTime: Float = 0.2
+
+    static let WalkSpeed: Float = 80
+    static let RunSpeed: Float = 200
+    static let ChargeSpeed: Float = 400
+    static let turnSpeed: Float = 120
+    static let AccelerationNormal: Float = 1300
+    static let AccelerationCharged: Float = 2300
+    static let StopRadius: Float = -10
+    static let StepTimeNormal: Float = 0.2
+    static let StepTimeCharged: Float = 0.1
+
+    var trackMudEndTime: Float = -1
+    static let DurationToTrackMud: Float = 15
+
+    var footMarks: [FootMark] = Array(repeating: FootMark(), count: 64)
+    var footMarkIndex: Int = 0
+
+    var lastFrameMouseButtonPressed: Bool = false
+
+    private var currentTask: GooseTask = .Wander
+    private var taskWanderInfo = Task_Wander()
+    private var taskNabMouseInfo = Task_NabMouse()
+    private var tmpRect: CGRect = .zero
+    private var tmpSize: CGSize = .zero
+    private var taskCollectWindowInfo = Task_CollectWindow()
+    private var taskTrackMudInfo = Task_TrackMud()
+
+    // Heavily meme-biased — user wanted the goose to bring memes much more often.
+    // CanAttackAtRandom defaults to false, so the NabMouse slots are skipped by
+    // ChooseNextTask anyway and effectively re-rolled.
+    private var gooseTaskWeightedList: [GooseTask] = [
+        .CollectWindow_Meme,
+        .CollectWindow_Meme,
+        .CollectWindow_Meme,
+        .CollectWindow_Meme,
+        .CollectWindow_Meme,
+        .CollectWindow_Meme,
+        .TrackMud,
+        .CollectWindow_Notepad
+    ]
+
+    private let taskPickerDeck = Deck(8)
+
+    var lFootPos: Vector2 = .zero
+    var rFootPos: Vector2 = .zero
+    var lFootMoveTimeStart: Float = -1
+    var rFootMoveTimeStart: Float = -1
+    var lFootMoveOrigin: Vector2 = .zero
+    var rFootMoveOrigin: Vector2 = .zero
+    var lFootMoveDir: Vector2 = .zero
+    var rFootMoveDir: Vector2 = .zero
+
+    static let wantStepAtDistance: Float = 5
+    static let feetDistanceApart: Int = 6
+    static let overshootFraction: Float = 0.4
+
+    var gooseRig = Rig()
+
+    static let ImageUrls: [String] = [
+        "https://preview.redd.it/dsfjv8aev0p31.png?width=960&crop=smart&auto=webp&s=1d58948acc5c6dd60df1092c1bd2a59a509069fd",
+        "https://i.redd.it/4ojv59zvglp31.jpg",
+        "https://i.redd.it/4bamd6lnso241.jpg",
+        "https://i.redd.it/5i5et9p1vsp31.jpg",
+        "https://i.redd.it/j2f1i9djx5p31.jpg"
+    ]
+
+    var ScheduledWanderTime: Float? = nil
+
+    init() {
+        position = Vector2(-20, 120)
+        targetPos = Vector2(100, 150)
+        if !GooseConfig.settings.CanAttackAtRandom {
+            let memeOriginalIndex = gooseTaskWeightedList.firstIndex(of: .CollectWindow_Meme) ?? 0
+            let num = taskPickerDeck.indices.firstIndex(of: memeOriginalIndex) ?? 0
+            let num2 = taskPickerDeck.indices[0]
+            taskPickerDeck.indices[0] = taskPickerDeck.indices[num]
+            taskPickerDeck.indices[num] = num2
+        }
+        lFootPos = GetFootHome(rightFoot: false)
+        rFootPos = GetFootHome(rightFoot: true)
+        SetTask(.Wander)
+    }
+
+    private func SetSpeed(_ tier: SpeedTiers) {
+        switch tier {
+        case .Walk:
+            currentSpeed = 80
+            currentAcceleration = 1300
+            stepTime = 0.2
+        case .Run:
+            currentSpeed = 200
+            currentAcceleration = 1300
+            stepTime = 0.2
+        case .Charge:
+            currentSpeed = 400
+            currentAcceleration = 2300
+            stepTime = 0.1
+        }
+    }
+
+    func IsLeftMouseDown() -> Bool {
+        fatalError("abstract")
+    }
+
+    func SetCursorClip(_ rect: CGRect) {
+        fatalError("abstract")
+    }
+
+    func Render(_ param: Any) {
+        fatalError("abstract")
+    }
+
+    func Tick() {
+        SetCursorClip(.zero)
+        if currentTask != .NabMouse && IsLeftMouseDown() && !lastFrameMouseButtonPressed
+            && Vector2.Distance(position + Vector2(0, 14), GetCursorPosition()) < 30 {
+            SetTask(.NabMouse)
+        }
+        lastFrameMouseButtonPressed = IsLeftMouseDown()
+        targetDirection = Vector2.Normalize(targetPos - position)
+        overrideExtendNeck = false
+        RunAI()
+        let vector = Vector2.Lerp(Vector2.GetFromAngleDegrees(direction), targetDirection, 0.25)
+        direction = atan2(vector.y, vector.x) * (180 / .pi)
+        if Vector2.Magnitude(velocity) > currentSpeed {
+            velocity = Vector2.Normalize(velocity) * currentSpeed
+        }
+        velocity += Vector2.Normalize(targetPos - position) * currentAcceleration * (1.0 / 120.0)
+        position += velocity * inverseFrameRate
+        SolveFeet()
+        _ = Vector2.Magnitude(velocity)
+        let num: Float = (overrideExtendNeck || (currentSpeed >= 200)) ? 1 : 0
+        gooseRig.neckLerpPercent = SamMath.Lerp(gooseRig.neckLerpPercent, num, 0.075)
+    }
+
+    func GetMainWindowWidth() -> Float { fatalError("abstract") }
+    func GetMainWindowHeight() -> Float { fatalError("abstract") }
+
+    private func RunWander() {
+        if Time.time - taskWanderInfo.wanderingStartTime > taskWanderInfo.wanderingDuration {
+            ChooseNextTask()
+        } else if taskWanderInfo.pauseStartTime > 0 {
+            if Time.time - taskWanderInfo.pauseStartTime > taskWanderInfo.pauseDuration {
+                taskWanderInfo.pauseStartTime = -1
+                let num = Task_Wander.GetRandomWalkTime() * currentSpeed
+                targetPos = Vector2(SamMath.RandomRange(0, GetMainWindowWidth()),
+                                    SamMath.RandomRange(0, GetMainWindowHeight()))
+                if Vector2.Distance(position, targetPos) > num {
+                    targetPos = position + Vector2.Normalize(targetPos - position) * num
+                }
+            } else {
+                velocity = .zero
+            }
+        } else if Vector2.Distance(position, targetPos) < 20 {
+            taskWanderInfo.pauseStartTime = Time.time
+            taskWanderInfo.pauseDuration = Task_Wander.GetRandomPauseDuration()
+        }
+    }
+
+    func GetCursorPosition() -> Vector2 { fatalError("abstract") }
+    func BringWindowToForeground() { fatalError("abstract") }
+    func PlaySound(_ sound: SoundEffect) { fatalError("abstract") }
+
+    private func RunNabMouse() {
+        let cursorPosition = GetCursorPosition()
+        let head2EndPoint = gooseRig.head2EndPoint
+        if taskNabMouseInfo.currentStage == .SeekingMouse {
+            SetSpeed(.Charge)
+            targetPos = cursorPosition - (gooseRig.head2EndPoint - position)
+            if Vector2.Distance(head2EndPoint, cursorPosition) < 15 {
+                taskNabMouseInfo.originalVectorToMouse = cursorPosition - head2EndPoint
+                taskNabMouseInfo.grabbedOriginalTime = Time.time
+                taskNabMouseInfo.dragToPoint = position
+                while Vector2.Distance(taskNabMouseInfo.dragToPoint, position) / 400 < 1.2 {
+                    taskNabMouseInfo.dragToPoint = Vector2(
+                        SamMath.RandomRange(0, 1) * GetMainWindowWidth(),
+                        SamMath.RandomRange(0, 1) * GetMainWindowHeight()
+                    )
+                }
+                targetPos = taskNabMouseInfo.dragToPoint
+                BringWindowToForeground()
+                PlaySound(.CHOMP)
+                taskNabMouseInfo.currentStage = .DraggingMouseAway
+            }
+            if Time.time > taskNabMouseInfo.chaseStartTime + 9 {
+                taskNabMouseInfo.currentStage = .Decelerating
+            }
+        }
+        if taskNabMouseInfo.currentStage == .DraggingMouseAway {
+            if Vector2.Distance(position, targetPos) < 30 {
+                SetCursorClip(.zero)
+                taskNabMouseInfo.currentStage = .Decelerating
+            } else {
+                let p = min((Time.time - taskNabMouseInfo.grabbedOriginalTime) / 0.06, 1)
+                let vector = Vector2.Lerp(taskNabMouseInfo.originalVectorToMouse, Task_NabMouse.StruggleRange, p)
+                let originX: Float = vector.x < 0 ? head2EndPoint.x + vector.x : head2EndPoint.x
+                let originY: Float = vector.y < 0 ? head2EndPoint.y + vector.y : head2EndPoint.y
+                tmpRect.origin = CGPoint(x: CGFloat(originX), y: CGFloat(originY))
+                tmpSize.width  = CGFloat(abs(Int(vector.x)))
+                tmpSize.height = CGFloat(abs(Int(vector.y)))
+                tmpRect.size = tmpSize
+                SetCursorClip(tmpRect)
+            }
+        }
+        if taskNabMouseInfo.currentStage == .Decelerating {
+            targetPos = position + Vector2.Normalize(velocity) * 5
+            velocity -= Vector2.Normalize(velocity) * currentAcceleration * 2 * inverseFrameRate
+            if Vector2.Magnitude(velocity) < 80 {
+                SetTask(.Wander)
+            }
+        }
+    }
+
+    private func RunCollectWindow() {
+        switch taskCollectWindowInfo.stage {
+        case .WalkingOffscreen:
+            if Vector2.Distance(position, targetPos) < 5 {
+                taskCollectWindowInfo.secsToWait = Task_CollectWindow.GetWaitTime()
+                taskCollectWindowInfo.waitStartTime = Time.time
+                taskCollectWindowInfo.stage = .WaitingToBringWindowBack
+            }
+        case .WaitingToBringWindowBack:
+            if Time.time - taskCollectWindowInfo.waitStartTime > taskCollectWindowInfo.secsToWait {
+                taskCollectWindowInfo.mainForm?.Show(CancelWindowTracking)
+                if let form = taskCollectWindowInfo.mainForm {
+                    switch taskCollectWindowInfo.screenDirection {
+                    case .Left:
+                        targetPos.y = SamMath.Lerp(position.y, GetMainWindowHeight() / 2,
+                                                   SamMath.RandomRange(0.2, 0.3))
+                        targetPos.x = Float(form.Width) + SamMath.RandomRange(15, 20)
+                    case .Top:
+                        targetPos.y = Float(form.Height) + SamMath.RandomRange(80, 100)
+                        targetPos.x = SamMath.Lerp(position.x, GetMainWindowWidth() / 2,
+                                                   SamMath.RandomRange(0.2, 0.3))
+                    case .Right:
+                        targetPos.y = SamMath.Lerp(position.y, GetMainWindowHeight() / 2,
+                                                   SamMath.RandomRange(0.2, 0.3))
+                        targetPos.x = GetMainWindowWidth() - (Float(form.Width) + SamMath.RandomRange(20, 30))
+                    }
+                    targetPos.x = SamMath.Clamp(targetPos.x, Float(form.Width + 55),
+                                                GetMainWindowWidth() - Float(form.Width + 55))
+                    targetPos.y = SamMath.Clamp(targetPos.y, Float(form.Height + 80), GetMainWindowHeight())
+                }
+                taskCollectWindowInfo.stage = .DraggingWindowBack
+            }
+        case .DraggingWindowBack:
+            if Vector2.Distance(position, targetPos) < 5 {
+                targetPos = position + Vector2.GetFromAngleDegrees(direction + 180) * 40
+                SetTask(.Wander)
+            } else {
+                overrideExtendNeck = true
+                targetDirection = position - targetPos
+                let p = gooseRig.head2EndPoint - taskCollectWindowInfo.windowOffsetToBeak
+                taskCollectWindowInfo.mainForm?.SetPosition(ToIntPoint(p))
+            }
+        }
+    }
+
+    private func CancelWindowTracking() {
+        SetTask(.NabMouse)
+    }
+
+    private func RunTrackMud() {
+        switch taskTrackMudInfo.stage {
+        case .DecideToRun:
+            _ = SetTargetOffscreen()
+            SetSpeed(.Run)
+            taskTrackMudInfo.stage = .RunningOffscreen
+        case .RunningOffscreen:
+            if Vector2.Distance(position, targetPos) < 5 {
+                targetPos = Vector2(SamMath.RandomRange(0, GetMainWindowWidth()),
+                                    SamMath.RandomRange(0, GetMainWindowHeight()))
+                taskTrackMudInfo.nextDirChangeTime = Time.time + Task_TrackMud.GetDirChangeInterval()
+                taskTrackMudInfo.timeToStopRunning = Time.time + 2
+                trackMudEndTime = Time.time + 15
+                taskTrackMudInfo.stage = .RunningWandering
+                PlaySound(.MudSquith)
+            }
+        case .RunningWandering:
+            if Vector2.Distance(position, targetPos) < 5 || Time.time > taskTrackMudInfo.nextDirChangeTime {
+                targetPos = Vector2(SamMath.RandomRange(0, GetMainWindowWidth()),
+                                    SamMath.RandomRange(0, GetMainWindowHeight()))
+                taskTrackMudInfo.nextDirChangeTime = Time.time + Task_TrackMud.GetDirChangeInterval()
+            }
+            if Time.time > taskTrackMudInfo.timeToStopRunning {
+                targetPos = position + Vector2(30, 3)
+                targetPos.x = SamMath.Clamp(targetPos.x, 55, GetMainWindowWidth() - 55)
+                targetPos.y = SamMath.Clamp(targetPos.y, 80, GetMainWindowHeight() - 80)
+                SetTask(.Wander, honck: false)
+            }
+        }
+    }
+
+    private func ChooseNextTask() {
+        if !GooseConfig.settings.CanAttackAtRandom && Time.time < GooseConfig.settings.FirstWanderTimeSeconds + 1 {
+            SetTask(.TrackMud)
+            return
+        }
+        var gooseTask = gooseTaskWeightedList[taskPickerDeck.Next()]
+        while (!GooseConfig.settings.CanAttackAtRandom && gooseTask == .NabMouse)
+            || (!allowAutomaticCollectWindows && isAutomaticCollectWindowTask(gooseTask)) {
+            gooseTask = gooseTaskWeightedList[taskPickerDeck.Next()]
+        }
+        SetTask(gooseTask)
+    }
+
+    func CreateImageForm() -> IMovableForm { fatalError("abstract") }
+    func CreateTextForm(_ title: String, _ note: String) -> IMovableForm { fatalError("abstract") }
+    func CreateDonateForm() -> IMovableForm { fatalError("abstract") }
+
+    func GetNextNote() -> String {
+        return Goose.possiblePhrases[Goose.textIndices.Next()]
+    }
+
+    func SetTask(_ task: GooseTask, honck: Bool = true) {
+        if honck {
+            PlaySound(.HONCC)
+        }
+        currentTask = task
+        switch task {
+        case .Wander:
+            SetSpeed(.Walk)
+            taskWanderInfo = Task_Wander()
+            taskWanderInfo.pauseStartTime = -1
+            taskWanderInfo.wanderingStartTime = Time.time
+            taskWanderInfo.wanderingDuration = ScheduledWanderTime ?? Task_Wander.GetRandomWanderDuration()
+            ScheduledWanderTime = nil
+        case .NabMouse:
+            taskNabMouseInfo = Task_NabMouse()
+            taskNabMouseInfo.chaseStartTime = Time.time
+        case .CollectWindow_Meme:
+            taskCollectWindowInfo = Task_CollectWindow()
+            taskCollectWindowInfo.mainForm = CreateImageForm()
+            SetTask(.CollectWindow_DONOTSET, honck: false)
+        case .CollectWindow_Notepad:
+            taskCollectWindowInfo = Task_CollectWindow()
+            taskCollectWindowInfo.mainForm = CreateTextForm("Goose \"Not-epad\"", GetNextNote())
+            SetTask(.CollectWindow_DONOTSET, honck: false)
+        case .CollectWindow_Donate:
+            // Donation window feature is disabled.
+            SetTask(.Wander, honck: false)
+        case .CollectWindow_DONOTSET:
+            taskCollectWindowInfo.screenDirection = SetTargetOffscreen()
+            if let form = taskCollectWindowInfo.mainForm {
+                switch taskCollectWindowInfo.screenDirection {
+                case .Left:
+                    taskCollectWindowInfo.windowOffsetToBeak = Vector2(Float(form.Width), Float(form.Height / 2))
+                case .Top:
+                    taskCollectWindowInfo.windowOffsetToBeak = Vector2(Float(form.Width / 2), Float(form.Height))
+                case .Right:
+                    taskCollectWindowInfo.windowOffsetToBeak = Vector2(0, Float(form.Height / 2))
+                }
+            }
+        case .TrackMud:
+            taskTrackMudInfo = Task_TrackMud()
+        case .Count:
+            break
+        }
+    }
+
+    private func RunAI() {
+        switch currentTask {
+        case .Wander:                  RunWander()
+        case .NabMouse:                RunNabMouse()
+        case .CollectWindow_DONOTSET:  RunCollectWindow()
+        case .TrackMud:                RunTrackMud()
+        case .CollectWindow_Meme, .CollectWindow_Notepad, .CollectWindow_Donate, .Count:
+            break
+        }
+    }
+
+    private func isAutomaticCollectWindowTask(_ task: GooseTask) -> Bool {
+        task == .CollectWindow_Meme
+            || task == .CollectWindow_Notepad
+            || task == .CollectWindow_Donate
+    }
+
+    private func SetTargetOffscreen(canExitTop: Bool = false) -> Task_CollectWindow.ScreenDirection {
+        var num = Int(position.x)
+        var result: Task_CollectWindow.ScreenDirection = .Left
+        targetPos = Vector2(-50, SamMath.Lerp(position.y, GetMainWindowHeight() / 2, 0.4))
+        if Float(num) > GetMainWindowWidth() / 2 {
+            num = Int(GetMainWindowWidth()) - Int(position.x)
+            result = .Right
+            targetPos = Vector2(GetMainWindowWidth() + 50,
+                                SamMath.Lerp(position.y, GetMainWindowHeight() / 2, 0.4))
+        }
+        if canExitTop && Float(num) > position.y {
+            result = .Top
+            targetPos = Vector2(SamMath.Lerp(position.x, GetMainWindowWidth() / 2, 0.4), -50)
+        }
+        return result
+    }
+
+    private func SolveFeet() {
+        _ = Vector2.GetFromAngleDegrees(direction)
+        _ = Vector2.GetFromAngleDegrees(direction + 90)
+        let footHome  = GetFootHome(rightFoot: false)
+        let footHome2 = GetFootHome(rightFoot: true)
+        if lFootMoveTimeStart < 0 && rFootMoveTimeStart < 0 {
+            if Vector2.Distance(lFootPos, footHome) > 5 {
+                lFootMoveOrigin = lFootPos
+                lFootMoveDir = Vector2.Normalize(footHome - lFootPos)
+                lFootMoveTimeStart = Time.time
+            } else if Vector2.Distance(rFootPos, footHome2) > 5 {
+                rFootMoveOrigin = rFootPos
+                rFootMoveDir = Vector2.Normalize(footHome2 - rFootPos)
+                rFootMoveTimeStart = Time.time
+            }
+        } else if lFootMoveTimeStart > 0 {
+            let b = footHome + lFootMoveDir * 0.4 * 5
+            if Time.time <= lFootMoveTimeStart + stepTime {
+                let p = (Time.time - lFootMoveTimeStart) / stepTime
+                lFootPos = Vector2.Lerp(lFootMoveOrigin, b, Easings.CubicEaseInOut(p))
+                return
+            }
+            lFootPos = b
+            lFootMoveTimeStart = -1
+            PlaySound(.Pat)
+            if Time.time < trackMudEndTime {
+                AddFootMark(lFootPos)
+            }
+        } else {
+            if rFootMoveTimeStart <= 0 { return }
+            let b2 = footHome2 + rFootMoveDir * 0.4 * 5
+            if Time.time > rFootMoveTimeStart + stepTime {
+                rFootPos = b2
+                rFootMoveTimeStart = -1
+                PlaySound(.Pat)
+                if Time.time < trackMudEndTime {
+                    AddFootMark(rFootPos)
+                }
+            } else {
+                let p2 = (Time.time - rFootMoveTimeStart) / stepTime
+                rFootPos = Vector2.Lerp(rFootMoveOrigin, b2, Easings.CubicEaseInOut(p2))
+            }
+        }
+    }
+
+    private func GetFootHome(rightFoot: Bool) -> Vector2 {
+        let num: Float = rightFoot ? 1 : 0
+        let vector = Vector2.GetFromAngleDegrees(direction + 90) * num
+        return position + vector * 6
+    }
+
+    private func AddFootMark(_ markPos: Vector2) {
+        // Delay footprint appearance by 0.5 seconds after the step lands.
+        footMarks[footMarkIndex].time = Time.time + 0.5
+        footMarks[footMarkIndex].position = markPos
+        footMarkIndex += 1
+        hasFootmarks = true
+        if footMarkIndex >= footMarks.count {
+            footMarkIndex = 0
+        }
+    }
+
+    func UpdateRig() {
+        let vector = Vector2(Float(Int(position.x)), Float(Int(position.y)))
+        let fromAngleDegrees = Vector2.GetFromAngleDegrees(direction)
+        let vector2 = Vector2(0, -1)
+        gooseRig.underbodyCenter = vector + vector2 * 9
+        gooseRig.bodyCenter = vector + vector2 * 14
+        let num  = Float(Int(SamMath.Lerp(20, 10, gooseRig.neckLerpPercent)))
+        let num2 = Float(Int(SamMath.Lerp(3, 16, gooseRig.neckLerpPercent)))
+        gooseRig.neckCenter = vector + vector2 * (14 + num)
+        gooseRig.neckBase = gooseRig.bodyCenter + fromAngleDegrees * 15
+        gooseRig.neckHeadPoint = gooseRig.neckBase + fromAngleDegrees * num2 + vector2 * num
+        gooseRig.head1EndPoint = gooseRig.neckHeadPoint + fromAngleDegrees * 3 - vector2 * 1
+        gooseRig.head2EndPoint = gooseRig.head1EndPoint + fromAngleDegrees * 5
+    }
+
+    func ToIntPoint(_ vector: Vector2) -> CGPoint {
+        CGPoint(x: CGFloat(Int(vector.x)), y: CGFloat(Int(vector.y)))
+    }
+}
