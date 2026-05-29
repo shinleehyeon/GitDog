@@ -96,11 +96,19 @@ final class MainStatusItemMenuManager: NSObject {
     }
 
     private func resizeIfVisible() {
-        guard let window, let host = hosting, window.isVisible, let button = anchorButton else { return }
+        guard let window, let host = hosting, window.isVisible else { return }
         // Defer one runloop tick so SwiftUI has applied the new content.
         DispatchQueue.main.async {
-            self.sizeWindowToContent(host: host, window: window)
-            window.anchor(below: button)
+            host.layoutSubtreeIfNeeded()
+            let size = host.fittingSize
+            guard size.width > 1, size.height > 1 else { return }
+            // Only touch the window if the size actually changed — and keep the
+            // TOP-LEFT corner pinned so a refresh never makes it jump up/down.
+            if abs(size.width - window.frame.width) < 0.5,
+               abs(size.height - window.frame.height) < 0.5 { return }
+            let topLeft = NSPoint(x: window.frame.minX, y: window.frame.maxY)
+            window.setContentSize(size)
+            window.setFrameTopLeftPoint(topLeft)
         }
     }
 

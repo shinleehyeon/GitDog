@@ -23,6 +23,12 @@ final class GipetViewModel: ObservableObject {
 
     var isSignedIn: Bool { TokenStore.shared.isSignedIn }
 
+    /// Today's contribution level (0...4) for the menu-bar grass square (local day).
+    var todayLevel: Int {
+        let cal = Calendar.current
+        return days.first(where: { cal.isDateInToday($0.date) })?.level ?? 0
+    }
+
     private let provider = GitHubDataProvider.shared
 
     /// Path ①: track a username with no token (public contributions only).

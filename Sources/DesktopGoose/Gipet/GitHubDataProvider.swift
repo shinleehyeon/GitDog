@@ -25,11 +25,23 @@ final class GitHubDataProvider {
     // MARK: - Contributions
 
     /// Fetch the last ~year of contribution days for `login`.
+    ///
+    /// With a token we use the authenticated GraphQL `contributionsCollection`
+    /// API — it returns exact per-day counts for the trailing year, is
+    /// timezone-correct, includes *today* immediately, and includes private
+    /// contributions. The public HTML scrape (used only token-less) lags a day
+    /// at the right edge and omits private contributions.
     func fetchContributions(login: String) async throws -> [ContributionDay] {
-        // The bare endpoint returns the rolling trailing year (ending today),
-        // exactly like the graph on github.com. Passing from/to that cross a
-        // year boundary makes GitHub clamp to a calendar year (padding future
-        // days as empty), so we don't.
+        if api.accessToken != nil {
+            if let days = try? await fetchViaGraphQL(), !days.isEmpty {
+                return days
+            }
+            // fall through to HTML if GraphQL fails
+        }
+        return try await fetchViaHTML(login: login)
+    }
+
+    private func fetchViaHTML(login: String) async throws -> [ContributionDay] {
         guard let url = URL(string: "https://github.com/users/\(login)/contributions") else {
             throw APIError.badURL
         }
@@ -37,6 +49,67 @@ final class GitHubDataProvider {
         let days = Self.parseContributions(html: html)
         guard !days.isEmpty else { throw APIError.decode("contributions must be not empty") }
         return days
+    }
+
+    // MARK: - GraphQL
+
+    private struct GraphQLResponse: Decodable {
+        struct DataField: Decodable { let viewer: Viewer }
+        struct Viewer: Decodable { let contributionsCollection: Collection }
+        struct Collection: Decodable { let contributionCalendar: Calendar }
+        struct Calendar: Decodable { let weeks: [Week] }
+        struct Week: Decodable { let contributionDays: [Day] }
+        struct Day: Decodable {
+            let date: String
+            let contributionCount: Int
+            let contributionLevel: String
+        }
+        let data: DataField
+    }
+
+    private func fetchViaGraphQL() async throws -> [ContributionDay] {
+        guard let token = api.accessToken else { throw APIError.decode("no token") }
+        guard let url = URL(string: "https://api.github.com/graphql") else { throw APIError.badURL }
+        let query = "query{viewer{contributionsCollection{contributionCalendar{weeks{contributionDays{date contributionCount contributionLevel}}}}}}"
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Gipet", forHTTPHeaderField: "User-Agent")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw APIError.http(http.statusCode)
+        }
+        let decoded = try JSONDecoder().decode(GraphQLResponse.self, from: data)
+
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = TimeZone.current
+        fmt.dateFormat = "yyyy-MM-dd"
+
+        var days: [ContributionDay] = []
+        for week in decoded.data.viewer.contributionsCollection.contributionCalendar.weeks {
+            for d in week.contributionDays {
+                guard let date = fmt.date(from: d.date) else { continue }
+                days.append(ContributionDay(date: date,
+                                            count: d.contributionCount,
+                                            level: Self.level(from: d.contributionLevel)))
+            }
+        }
+        return days.sorted { $0.date < $1.date }
+    }
+
+    private static func level(from level: String) -> Int {
+        switch level {
+        case "FIRST_QUARTILE":  return 1
+        case "SECOND_QUARTILE": return 2
+        case "THIRD_QUARTILE":  return 3
+        case "FOURTH_QUARTILE": return 4
+        default:                return 0   // NONE
+        }
     }
 
     // MARK: - HTML parsing

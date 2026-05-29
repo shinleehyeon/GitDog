@@ -198,14 +198,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
+    // GitHub contribution colors (level 0...4) → a small rounded grass square.
+    private func grassSquareImage(level: Int) -> NSImage {
+        let colors: [NSColor] = [
+            NSColor(calibratedRed: 0.17, green: 0.19, blue: 0.22, alpha: 1), // 0 empty
+            NSColor(calibratedRed: 0.05, green: 0.27, blue: 0.16, alpha: 1),
+            NSColor(calibratedRed: 0.00, green: 0.43, blue: 0.20, alpha: 1),
+            NSColor(calibratedRed: 0.15, green: 0.65, blue: 0.25, alpha: 1),
+            NSColor(calibratedRed: 0.22, green: 0.83, blue: 0.33, alpha: 1),
+        ]
+        let c = colors[max(0, min(4, level))]
+        let size = NSSize(width: 13, height: 13)
+        let img = NSImage(size: size)
+        img.lockFocus()
+        let rect = NSRect(x: 1.5, y: 1.5, width: 10, height: 10)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 2.5, yRadius: 2.5)
+        c.setFill()
+        path.fill()
+        img.unlockFocus()
+        img.isTemplate = false   // keep the real green color, not monochrome
+        return img
+    }
+
     private func refreshTitle() {
         let charEmoji = CharacterSettings.shared.current == .goose ? "🪿" : "🐕"
         let vm = GipetViewModel.shared
         if vm.isSignedIn, !vm.days.isEmpty {
-            // Mood reflects today's commit; badge shows the current streak.
-            let mood = vm.stats.committedToday ? "😊" : "😴"
-            statusItem?.button?.title = "\(charEmoji)\(mood) \(vm.stats.currentStreak)"
+            // Today's grass square (GitHub colors) + today's commit count.
+            statusItem?.button?.image = grassSquareImage(level: vm.todayLevel)
+            statusItem?.button?.imagePosition = .imageLeading
+            statusItem?.button?.title = " \(charEmoji) \(vm.stats.todayCount)"
         } else {
+            statusItem?.button?.image = nil
             statusItem?.button?.title = charEmoji
         }
         gooseMenu?.items.forEach { mi in

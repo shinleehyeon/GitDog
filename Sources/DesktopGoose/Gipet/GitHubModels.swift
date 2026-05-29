@@ -70,10 +70,11 @@ struct ContributionStats: Equatable {
             stats.bestDayDate = best.date
         }
 
+        // "Today" = the local calendar day. If GitHub hasn't recorded a cell
+        // for today yet (its graph runs on UTC), today's count is simply 0,
+        // which is what we want — you haven't contributed *today* yet.
         let today = calendar.startOfDay(for: Date())
-        if let todayDay = sorted.first(where: { calendar.isDate($0.date, inSameDayAs: today) }) {
-            stats.todayCount = todayDay.count
-        }
+        stats.todayCount = sorted.first(where: { calendar.isDate($0.date, inSameDayAs: today) })?.count ?? 0
 
         // Longest streak: the longest run of consecutive contribution days,
         // tracking the start/end dates of the best run.
