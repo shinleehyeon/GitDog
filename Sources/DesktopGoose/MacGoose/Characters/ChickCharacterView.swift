@@ -60,8 +60,8 @@ final class ChickCharacterView: NSView {
         let footL = goose.lFootPos
         let footR = goose.rFootPos
         // Separate rear/front feet further for a clearer 4-leg silhouette.
-        let rearLFoot = footL - dir * 16
-        let rearRFoot = footR - dir * 16
+        let rearLFoot = footL - dir * 22
+        let rearRFoot = footR - dir * 22
         drawLeg(g, foot: rearLFoot, up: up, color: coatDark)
         drawLeg(g, foot: rearRFoot, up: up, color: coatDark)
         // Front legs stay anchored from the original foot bases.
@@ -72,9 +72,11 @@ final class ChickCharacterView: NSView {
 
         // --- Body + neck/head (goose silhouette kept intentionally close) ---
         let outlinePad: Float = 2
-        let bodyHalfLength: Float = 11
-        let underbodyHalfLength: Float = 9
-        drawCapsule(g, from: bodyCenter + dir * bodyHalfLength, to: bodyCenter - dir * bodyHalfLength,
+        let bodyFrontLength: Float = 11
+        let bodyRearLength: Float = 16
+        let underbodyFrontLength: Float = 9
+        let underbodyRearLength: Float = 13
+        drawCapsule(g, from: bodyCenter + dir * bodyFrontLength, to: bodyCenter - dir * bodyRearLength,
                     width: 22 + outlinePad, color: coatDark)
         drawCapsule(g, from: goose.gooseRig.neckBase, to: goose.gooseRig.neckHeadPoint,
                     width: 13 + outlinePad, color: coatDark)
@@ -82,9 +84,9 @@ final class ChickCharacterView: NSView {
                     width: 15 + outlinePad, color: coatDark)
         drawCapsule(g, from: goose.gooseRig.head1EndPoint, to: goose.gooseRig.head2EndPoint,
                     width: 10 + outlinePad, color: coatDark)
-        drawCapsule(g, from: underbodyCenter + dir * underbodyHalfLength, to: underbodyCenter - dir * underbodyHalfLength,
+        drawCapsule(g, from: underbodyCenter + dir * underbodyFrontLength, to: underbodyCenter - dir * underbodyRearLength,
                     width: 15, color: tan)
-        drawCapsule(g, from: bodyCenter + dir * bodyHalfLength, to: bodyCenter - dir * bodyHalfLength,
+        drawCapsule(g, from: bodyCenter + dir * bodyFrontLength, to: bodyCenter - dir * bodyRearLength,
                     width: 22, color: coat)
         drawCapsule(g, from: goose.gooseRig.neckBase, to: goose.gooseRig.neckHeadPoint,
                     width: 13, color: coat)
@@ -99,7 +101,7 @@ final class ChickCharacterView: NSView {
         drawCapsule(g, from: snoutStart, to: snoutEnd, width: 8, color: tan)
         fillCircle(g, color: nose, center: snoutEnd + dir * 0.8, radius: 2.2)
 
-        // --- Ears (small floppy ears near the head base) ---
+        // --- Ears (simple floppy ears) ---
         let earBaseL = goose.gooseRig.neckHeadPoint - perp * 4 + up * 1
         let earBaseR = goose.gooseRig.neckHeadPoint + perp * 4 + up * 1
         drawCapsule(g, from: earBaseL, to: earBaseL + up * -5 + dir * -1.5, width: 4, color: coatDark)
@@ -150,6 +152,16 @@ final class ChickCharacterView: NSView {
     private func drawLeg(_ g: CGContext, foot: Vector2, up: Vector2, color: CGColor) {
         let legTop = foot + up * 3.0
         drawCapsule(g, from: legTop, to: foot + up * 0.8, width: 3.0, color: color)
-        fillEllipse(g, color: color, center: foot + up * 1.0, xR: 3.5, yR: 2.3)
+        drawDogPaw(g, anchor: foot + up * 1.0, color: color)
+    }
+
+    private func drawDogPaw(_ g: CGContext, anchor: Vector2, color: CGColor) {
+        // Keep footprint size close to previous paw, but shape it like a dog paw:
+        // one rounded base pad + four toe beans.
+        fillEllipse(g, color: color, center: anchor + Vector2(0, -0.55), xR: 2.6, yR: 1.55)  // base pad
+        fillEllipse(g, color: color, center: anchor + Vector2(-2.0, 1.2), xR: 0.72, yR: 0.92) // toe 1
+        fillEllipse(g, color: color, center: anchor + Vector2(-0.7, 1.8), xR: 0.72, yR: 0.96) // toe 2
+        fillEllipse(g, color: color, center: anchor + Vector2(0.7, 1.8), xR: 0.72, yR: 0.96)  // toe 3
+        fillEllipse(g, color: color, center: anchor + Vector2(2.0, 1.2), xR: 0.72, yR: 0.92)  // toe 4
     }
 }

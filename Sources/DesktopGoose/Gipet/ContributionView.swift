@@ -317,7 +317,10 @@ struct ContributionGrid: View {
 
     private func tooltipX(_ col: Int, width: CGFloat) -> CGFloat {
         let raw = Grid.leading + CGFloat(col) * Grid.advance + Grid.cell / 2
-        return min(max(raw, 90), width - 90)
+        // Keep enough horizontal padding for longer text like
+        // "7 contributions on May 30, 2026" so it doesn't clip at edges.
+        let safeInset: CGFloat = 130
+        return min(max(raw, safeInset), width - safeInset)
     }
 
     private var legend: some View {

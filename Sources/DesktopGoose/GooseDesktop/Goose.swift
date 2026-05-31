@@ -19,6 +19,7 @@ class Goose {
     }
 
     enum SpeedTiers {
+        case Stroll   // slow amble
         case Walk
         case Run
         case Charge
@@ -47,7 +48,8 @@ class Goose {
         var pauseDuration: Float = 0
 
         static func GetRandomPauseDuration() -> Float {
-            return 1 + SamMath.RandomRange(0, 1) * 1
+            // Longer, more frequent stops — the dog idles (and sits) more.
+            return 2 + SamMath.RandomRange(0, 1) * 4   // 2…6s
         }
 
         static func GetRandomWanderDuration() -> Float {
@@ -295,6 +297,10 @@ class Goose {
 
     private func SetSpeed(_ tier: SpeedTiers) {
         switch tier {
+        case .Stroll:
+            currentSpeed = 38
+            currentAcceleration = 900
+            stepTime = 0.32
         case .Walk:
             currentSpeed = 80
             currentAcceleration = 1300
@@ -335,11 +341,19 @@ class Goose {
         RunAI()
         let vector = Vector2.Lerp(Vector2.GetFromAngleDegrees(direction), targetDirection, 0.25)
         direction = atan2(vector.y, vector.x) * (180 / .pi)
-        if Vector2.Magnitude(velocity) > currentSpeed {
-            velocity = Vector2.Normalize(velocity) * currentSpeed
+        // During a wander pause, freeze completely. Otherwise the per-frame
+        // acceleration toward the (near-but-not-reached) target keeps nudging
+        // the position, which reads as a jitter/tremble while "standing still".
+        let pausedStill = (currentTask == .Wander && taskWanderInfo.pauseStartTime > 0)
+        if pausedStill {
+            velocity = .zero
+        } else {
+            if Vector2.Magnitude(velocity) > currentSpeed {
+                velocity = Vector2.Normalize(velocity) * currentSpeed
+            }
+            velocity += Vector2.Normalize(targetPos - position) * currentAcceleration * (1.0 / 120.0)
+            position += velocity * inverseFrameRate
         }
-        velocity += Vector2.Normalize(targetPos - position) * currentAcceleration * (1.0 / 120.0)
-        position += velocity * inverseFrameRate
         if currentTask == .HeartTrail && taskHeartTrailInfo.isTracing {
             position = targetPos
             velocity = .zero
@@ -364,6 +378,9 @@ class Goose {
         } else if taskWanderInfo.pauseStartTime > 0 {
             if Time.time - taskWanderInfo.pauseStartTime > taskWanderInfo.pauseDuration {
                 taskWanderInfo.pauseStartTime = -1
+                // Vary the pace each leg — mostly a slow stroll, sometimes a
+                // normal walk. (Slower legs are also shorter → more pausing.)
+                SetSpeed(SamMath.RandomRange(0, 1) < 0.5 ? .Stroll : .Walk)
                 let num = Task_Wander.GetRandomWalkTime() * currentSpeed
                 targetPos = Vector2(SamMath.RandomRange(0, GetMainWindowWidth()),
                                     SamMath.RandomRange(0, GetMainWindowHeight()))
