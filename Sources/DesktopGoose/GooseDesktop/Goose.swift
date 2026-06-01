@@ -229,6 +229,14 @@ class Goose {
 
     var lastFrameMouseButtonPressed: Bool = false
 
+    // Click-to-rest: when true the dog sits still and ignores wandering/tasks.
+    var isResting: Bool = false
+
+    // Speech bubble shown above the dog (e.g. a "커밋해!" nudge). Read by the
+    // character view each frame; cleared automatically when it expires.
+    private(set) var speechText: String? = nil
+    private var speechExpireTime: Float = 0
+
     private var currentTask: GooseTask = .Wander
     private var taskWanderInfo = Task_Wander()
     private var taskNabMouseInfo = Task_NabMouse()
@@ -328,14 +336,40 @@ class Goose {
         fatalError("abstract")
     }
 
+    // Show a speech bubble above the dog for `duration` seconds.
+    func Say(_ text: String, duration: Float = 4) {
+        speechText = text
+        speechExpireTime = Time.time + duration
+    }
+
     func Tick() {
         let prevPosition = position
         SetCursorClip(.zero)
-        if currentTask != .NabMouse && IsLeftMouseDown() && !lastFrameMouseButtonPressed
-            && Vector2.Distance(position + Vector2(0, 14), GetCursorPosition()) < 30 {
-            SetTask(.NabMouse)
+        if speechText != nil && Time.time > speechExpireTime {
+            speechText = nil
+        }
+        // Click on the dog toggles resting (sit & stop) instead of grabbing the
+        // cursor. Clicking again wakes it back up into normal wandering.
+        let clickedOnDog = IsLeftMouseDown() && !lastFrameMouseButtonPressed
+            && Vector2.Distance(position + Vector2(0, 14), GetCursorPosition()) < 30
+        if clickedOnDog {
+            isResting.toggle()
+            velocity = .zero
+            if isResting {
+                targetPos = position
+            } else {
+                SetTask(.Wander, honck: false)
+            }
         }
         lastFrameMouseButtonPressed = IsLeftMouseDown()
+        // While resting, freeze in place: no AI, no movement — just keep the rig
+        // solved so the sitting pose renders cleanly.
+        if isResting {
+            velocity = .zero
+            targetPos = position
+            SolveFeet()
+            return
+        }
         targetDirection = Vector2.Normalize(targetPos - position)
         overrideExtendNeck = false
         RunAI()

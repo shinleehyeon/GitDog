@@ -59,11 +59,20 @@ final class ChickCharacterView: NSView {
         // Back legs follow goose foot anchors (animated by solver).
         let footL = goose.lFootPos
         let footR = goose.rFootPos
-        // Separate rear/front feet further for a clearer 4-leg silhouette.
-        let rearLFoot = footL - dir * 22
-        let rearRFoot = footR - dir * 22
-        drawLeg(g, foot: rearLFoot, up: up, color: coatDark)
-        drawLeg(g, foot: rearRFoot, up: up, color: coatDark)
+        if goose.isResting {
+            // Sitting: rear folds under into haunches with the rear paws tucked
+            // forward; the front legs stay planted.
+            fillEllipse(g, color: coat, center: bodyCenter - dir * 13 - perp * 7, xR: 7, yR: 9)
+            fillEllipse(g, color: coat, center: bodyCenter - dir * 13 + perp * 7, xR: 7, yR: 9)
+            drawDogPaw(g, anchor: bodyCenter - dir * 4 - perp * 6, color: coatDark)
+            drawDogPaw(g, anchor: bodyCenter - dir * 4 + perp * 6, color: coatDark)
+        } else {
+            // Separate rear/front feet further for a clearer 4-leg silhouette.
+            let rearLFoot = footL - dir * 22
+            let rearRFoot = footR - dir * 22
+            drawLeg(g, foot: rearLFoot, up: up, color: coatDark)
+            drawLeg(g, foot: rearRFoot, up: up, color: coatDark)
+        }
         // Front legs stay anchored from the original foot bases.
         // This keeps front-leg placement fixed even if rear-leg offset changes.
         let frontOffsetFromBase = dir * 15
@@ -114,6 +123,64 @@ final class ChickCharacterView: NSView {
         fillCircle(g, color: nose, center: eyeL, radius: 1.8)
         fillCircle(g, color: nose, center: eyeR, radius: 1.8)
 
+        // --- Speech bubble (e.g. a "커밋해!" nudge) ---
+        if let speech = goose.speechText, !speech.isEmpty {
+            drawSpeechBubble(g, text: speech, anchor: goose.gooseRig.neckHeadPoint, up: up)
+        }
+
+        g.restoreGState()
+    }
+
+    // Draw a small rounded speech bubble above the dog's head. The drawing
+    // context is y-flipped (see draw()), so the text is rendered through a
+    // local flip to keep it upright.
+    private func drawSpeechBubble(_ g: CGContext, text: String, anchor: Vector2, up: Vector2) {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 11),
+            .foregroundColor: NSColor.black
+        ]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        let textSize = str.size()
+        let padX: CGFloat = 8, padY: CGFloat = 5
+        let w = textSize.width + padX * 2
+        let h = textSize.height + padY * 2
+        // Center the bubble above the head (up = (0,-1) in this coord space).
+        let center = anchor + up * (Float(h) / 2 + 16)
+        let rect = CGRect(x: CGFloat(center.x) - w / 2, y: CGFloat(center.y) - h / 2,
+                          width: w, height: h)
+        let fill = CGColor(red: 1, green: 1, blue: 1, alpha: 0.96)
+        let edge = CGColor(red: 0.32, green: 0.20, blue: 0.12, alpha: 1)
+
+        // Tail pointing down toward the head (down = +y here).
+        let bx = CGFloat(center.x)
+        let by = CGFloat(center.y) + h / 2
+        g.beginPath()
+        g.move(to: CGPoint(x: bx - 6, y: by - 1))
+        g.addLine(to: CGPoint(x: bx + 6, y: by - 1))
+        g.addLine(to: CGPoint(x: bx, y: by + 8))
+        g.closePath()
+        g.setFillColor(fill)
+        g.fillPath()
+
+        // Rounded bubble body.
+        let body = CGPath(roundedRect: rect, cornerWidth: 7, cornerHeight: 7, transform: nil)
+        g.setFillColor(fill)
+        g.addPath(body)
+        g.fillPath()
+        g.setStrokeColor(edge)
+        g.setLineWidth(1.5)
+        g.addPath(body)
+        g.strokePath()
+
+        // Text — undo the y-flip so glyphs are upright.
+        g.saveGState()
+        g.translateBy(x: CGFloat(center.x), y: CGFloat(center.y))
+        g.scaleBy(x: 1, y: -1)
+        let nsCtx = NSGraphicsContext(cgContext: g, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+        str.draw(at: NSPoint(x: -textSize.width / 2, y: -textSize.height / 2))
+        NSGraphicsContext.restoreGraphicsState()
         g.restoreGState()
     }
 

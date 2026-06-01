@@ -16,6 +16,9 @@ final class MacintoshGoose: Goose {
     private var nextMemeTitle: String?
     private var nextNoteText: String?
     private var nextNoteTitle: String?
+    // Avoid fetching the same meme/note twice in a row.
+    private var lastMemePath: String?
+    private var lastNotePath: String?
     private var framerateObserver: NSObjectProtocol?
 
     private(set) var Window: NSWindow!
@@ -246,6 +249,15 @@ final class MacintoshGoose: Goose {
         SetTask(.CollectWindow_Notepad, honck: false)
     }
 
+    // Pick a random entry from `pool`, but skip `last` so the dog never
+    // fetches the same thing twice in a row (unless there's only one choice).
+    private func pickAvoidingRepeat(_ pool: [String], last: String?) -> String {
+        guard pool.count > 1 else { return pool.first ?? "" }
+        let candidates = pool.filter { $0 != last }
+        let source = candidates.isEmpty ? pool : candidates
+        return source[Int.random(in: 0..<source.count)]
+    }
+
     override func CreateImageForm() -> IMovableForm {
         var image = nextMemeImage
         var url = nextMemeUrl
@@ -259,7 +271,8 @@ final class MacintoshGoose: Goose {
             ]
             let localPool = files + customLocalMemes
             let pool: [String] = localPool.isEmpty ? Goose.ImageUrls : localPool
-            let text = pool[Int.random(in: 0..<pool.count)]
+            let text = pickAvoidingRepeat(pool, last: lastMemePath)
+            lastMemePath = text
             url = text.hasPrefix("https://") ? URL(string: text) : URL(fileURLWithPath: text)
             if let u = url {
                 if let img = NSImage(contentsOf: u) {
@@ -287,7 +300,8 @@ final class MacintoshGoose: Goose {
         if files.isEmpty {
             return super.GetNextNote()
         }
-        let path = files[Int.random(in: 0..<files.count)]
+        let path = pickAvoidingRepeat(files, last: lastNotePath)
+        lastNotePath = path
         return (try? String(contentsOfFile: path, encoding: .utf8)) ?? super.GetNextNote()
     }
 
