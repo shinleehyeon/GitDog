@@ -77,7 +77,7 @@ final class ChickCharacterView: NSView {
         // This keeps front-leg placement fixed even if rear-leg offset changes.
         let frontOffsetFromBase = dir * 15
         drawLeg(g, foot: footL + frontOffsetFromBase, up: up, color: coatDark)
-        drawLeg(g, foot: footR + frontOffsetFromBase, up: up, color: coatDark)
+        drawLeg(g, foot: footR + frontOffsetFromBase, up: up, color: coatDark)                  
 
         // --- Body + neck/head (goose silhouette kept intentionally close) ---
         let outlinePad: Float = 2
