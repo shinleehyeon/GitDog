@@ -410,7 +410,6 @@ struct ReposSection: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Text("Repos").font(.system(size: 20, weight: .bold)).foregroundColor(GipetTheme.ink)
-                aiBadge
                 Spacer()
                 Button {
                     if let path = pickFolder() { model.addRepo(path: path) }
@@ -433,15 +432,6 @@ struct ReposSection: View {
                 }
             }
         }
-    }
-
-    private var aiBadge: some View {
-        let on = model.aiAvailable
-        return Text(on ? "🧁 AI on" : "AI off")
-            .font(.system(size: 12, weight: .bold))
-            .foregroundColor(on ? GipetTheme.green : GipetTheme.inkSoft)
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(Capsule().fill(on ? GipetTheme.greenSoft : GipetTheme.panel))
     }
 
     private func pickFolder() -> String? {

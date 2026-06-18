@@ -229,39 +229,108 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
-    // GitHub contribution colors (level 0...4) → a small rounded grass square.
-    private func grassSquareImage(level: Int) -> NSImage {
-        let colors: [NSColor] = [
-            NSColor(calibratedRed: 0.17, green: 0.19, blue: 0.22, alpha: 1), // 0 empty
-            NSColor(calibratedRed: 0.05, green: 0.27, blue: 0.16, alpha: 1),
-            NSColor(calibratedRed: 0.00, green: 0.43, blue: 0.20, alpha: 1),
-            NSColor(calibratedRed: 0.15, green: 0.65, blue: 0.25, alpha: 1),
-            NSColor(calibratedRed: 0.22, green: 0.83, blue: 0.33, alpha: 1),
+    // Pill-shaped status item: [dot] [7 day bars] [today count].
+    //   dot   — green if committed today, red if not
+    //   bars  — last 7 days, colored by each day's contribution level (0 = faint)
+    //   count — today's commit count (0 when none)
+    private func statusBarImage(levels: [Int], todayCount: Int,
+                                committed: Bool, isDark: Bool) -> NSImage {
+        // Layout metrics (image points; menu-bar height ≈ 18).
+        let H: CGFloat = 18
+        let pillX: CGFloat = 1
+        let dotR: CGFloat = 3, dotCX: CGFloat = 9.5
+        let barW: CGFloat = 3.6, advance: CGFloat = 5.4, barH: CGFloat = 10
+        let barsStartX: CGFloat = 16
+        let cy = H / 2
+
+        // GitHub contribution palette (level 0…4); 0 = faint placeholder.
+        let empty = isDark ? NSColor(white: 1, alpha: 0.22) : NSColor(white: 0, alpha: 0.14)
+        let levelColors: [NSColor] = [
+            empty,
+            NSColor(srgbRed: 0.608, green: 0.914, blue: 0.659, alpha: 1), // #9be9a8
+            NSColor(srgbRed: 0.251, green: 0.769, blue: 0.388, alpha: 1), // #40c463
+            NSColor(srgbRed: 0.188, green: 0.631, blue: 0.306, alpha: 1), // #30a14e
+            NSColor(srgbRed: 0.129, green: 0.431, blue: 0.224, alpha: 1), // #216e39
         ]
-        let c = colors[max(0, min(4, level))]
-        let size = NSSize(width: 13, height: 13)
-        let img = NSImage(size: size)
+        let dotColor = committed
+            ? (isDark ? NSColor(srgbRed: 0.247, green: 0.725, blue: 0.314, alpha: 1)   // #3fb950
+                      : NSColor(srgbRed: 0.180, green: 0.643, blue: 0.310, alpha: 1))  // #2ea44f
+            : NSColor(srgbRed: 0.941, green: 0.333, blue: 0.420, alpha: 1)             // #f0556b
+        let textColor = isDark ? NSColor(white: 0.957, alpha: 1) : NSColor(white: 0.114, alpha: 1)
+        let pillFill   = isDark ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 0, alpha: 0.05)
+        let pillStroke = isDark ? NSColor(white: 1, alpha: 0.20) : NSColor(white: 0, alpha: 0.12)
+
+        // Number font — rounded heavy, like the mockup's Baloo 2.
+        let base = NSFont.systemFont(ofSize: 11.5, weight: .heavy)
+        let font: NSFont = {
+            if let d = base.fontDescriptor.withDesign(.rounded) {
+                return NSFont(descriptor: d, size: 11.5) ?? base
+            }
+            return base
+        }()
+        let numStr = "\(todayCount)" as NSString
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: textColor]
+        let numSize = numStr.size(withAttributes: attrs)
+
+        let barsEndX = barsStartX + CGFloat(6) * advance + barW   // 7 bars
+        let numStartX = barsEndX + 5
+        let pillRight = numStartX + numSize.width + 7
+        let W = pillRight + 1
+
+        let img = NSImage(size: NSSize(width: ceil(W), height: H))
         img.lockFocus()
-        let rect = NSRect(x: 1.5, y: 1.5, width: 10, height: 10)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 2.5, yRadius: 2.5)
-        c.setFill()
-        path.fill()
+
+        // Pill background.
+        let pill = NSBezierPath(roundedRect: NSRect(x: pillX, y: 1.5, width: pillRight - pillX, height: H - 3),
+                                xRadius: 7.5, yRadius: 7.5)
+        pillFill.setFill(); pill.fill()
+        pillStroke.setStroke(); pill.lineWidth = 1; pill.stroke()
+
+        // Left status dot.
+        dotColor.setFill()
+        NSBezierPath(ovalIn: NSRect(x: dotCX - dotR, y: cy - dotR, width: dotR * 2, height: dotR * 2)).fill()
+
+        // Seven day bars (oldest → newest, today rightmost).
+        for i in 0..<7 {
+            let lvl = i < levels.count ? max(0, min(4, levels[i])) : 0
+            levelColors[lvl].setFill()
+            let x = barsStartX + CGFloat(i) * advance
+            NSBezierPath(roundedRect: NSRect(x: x, y: cy - barH / 2, width: barW, height: barH),
+                         xRadius: 1.3, yRadius: 1.3).fill()
+        }
+
+        // Today's commit count.
+        numStr.draw(at: NSPoint(x: numStartX, y: (H - numSize.height) / 2), withAttributes: attrs)
+
         img.unlockFocus()
-        img.isTemplate = false   // keep the real green color, not monochrome
+        img.isTemplate = false   // keep real colors, not monochrome
         return img
     }
 
+    /// Most recent 7 calendar days (up to today) as contribution levels, padded
+    /// at the front if fewer are available.
+    private func recent7Levels(_ vm: GipetViewModel) -> [Int] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        var levels = vm.days.filter { $0.date <= today }.suffix(7).map { $0.level }
+        while levels.count < 7 { levels.insert(0, at: 0) }
+        return levels
+    }
+
     private func refreshTitle() {
-        let charEmoji = "🐕"
         let vm = GipetViewModel.shared
-        if vm.isSignedIn, !vm.days.isEmpty {
-            // Today's grass square (GitHub colors) + today's commit count.
-            statusItem?.button?.image = grassSquareImage(level: vm.todayLevel)
-            statusItem?.button?.imagePosition = .imageLeading
-            statusItem?.button?.title = " \(charEmoji) \(vm.stats.todayCount)"
+        if vm.isSignedIn, !vm.days.isEmpty, let button = statusItem?.button {
+            let isDark = button.effectiveAppearance
+                .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            button.image = statusBarImage(levels: recent7Levels(vm),
+                                          todayCount: vm.stats.todayCount,
+                                          committed: vm.stats.committedToday,
+                                          isDark: isDark)
+            button.imagePosition = .imageOnly
+            button.title = ""
         } else {
             statusItem?.button?.image = nil
-            statusItem?.button?.title = charEmoji
+            statusItem?.button?.title = "🐕"
         }
         gooseMenu?.items.forEach { mi in
             if let raw = mi.representedObject as? String,
