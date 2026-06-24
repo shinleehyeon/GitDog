@@ -20,6 +20,10 @@ final class MacintoshGoose: Goose {
     private var lastMemePath: String?
     private var lastNotePath: String?
     private var framerateObserver: NSObjectProtocol?
+    private var rightClickMonitor: Any?
+
+    var clickIndicatorScreenPos: CGPoint? = nil
+    var clickIndicatorStartTime: Float = 0
 
     private(set) var Window: NSWindow!
 
@@ -78,7 +82,7 @@ final class MacintoshGoose: Goose {
             Time.TickTime()
             self.Tick()
             self.gooseView.frame = self.CalculateGooseViewFrame()
-            if self.hasFootmarks {
+            if self.hasFootmarks || self.clickIndicatorScreenPos != nil {
                 self.Window.contentView?.setNeedsDisplay(self.Window.contentView?.frame ?? .zero)
             }
             self.gooseView.setNeedsDisplay(self.gooseView.bounds)
@@ -97,6 +101,10 @@ final class MacintoshGoose: Goose {
             let v = ChickCharacterView()
             v.goose = self
             view = v
+        case .pig:
+            let v = PigCharacterView()
+            v.goose = self
+            view = v
         }
         view.frame = .zero
         parent.addSubview(view)
@@ -106,6 +114,16 @@ final class MacintoshGoose: Goose {
     func swapCharacter(to kind: CharacterKind) {
         guard let bg = Window.contentView else { return }
         installCharacterView(for: kind, into: bg)
+    }
+
+    var coatVariant: Int = 0 {
+        didSet { (gooseView as? ChickCharacterView)?.coatVariant = coatVariant }
+    }
+
+    func dismiss() {
+        tickTimer?.invalidate()
+        tickTimer = nil
+        Window.orderOut(nil)
     }
 
     private func CalculateGooseViewFrame() -> CGRect {

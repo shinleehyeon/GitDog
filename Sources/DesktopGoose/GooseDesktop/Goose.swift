@@ -116,7 +116,6 @@ class Goose {
         var waitStartTime: Float = 0
         var screenDirection: ScreenDirection = .Left
         var windowOffsetToBeak: Vector2 = .zero
-
         static func GetWaitTime() -> Float {
             return SamMath.RandomRange(2, 3.5)
         }
@@ -288,15 +287,22 @@ class Goose {
 
     var gooseRig = Rig()
 
-    static let ImageUrls: [String] = [
-        "https://preview.redd.it/dsfjv8aev0p31.png?width=960&crop=smart&auto=webp&s=1d58948acc5c6dd60df1092c1bd2a59a509069fd",
-        "https://i.redd.it/4ojv59zvglp31.jpg",
-        "https://i.redd.it/4bamd6lnso241.jpg",
-        "https://i.redd.it/5i5et9p1vsp31.jpg",
-        "https://i.redd.it/j2f1i9djx5p31.jpg"
-    ]
+    static let ImageUrls: [String] = []
 
     var ScheduledWanderTime: Float? = nil
+
+    // When set, Wander targets this fixed position instead of picking random destinations.
+    // Cleared automatically on arrival; setting a new one overrides any existing one.
+    var lockedTarget: Vector2? = nil
+    var onLockedTargetArrival: (() -> Void)? = nil
+
+    // Walk directly to a destination, bypassing the Wander AI. Fires completion on arrival.
+    func walkTo(_ dest: Vector2, onArrival: (() -> Void)? = nil) {
+        lockedTarget = dest
+        onLockedTargetArrival = onArrival
+        ScheduledWanderTime = 9999
+        SetTask(.Wander, honck: false)
+    }
 
     init() {
         position = Vector2(-20, 120)
@@ -410,11 +416,24 @@ class Goose {
             SolveFeet()
             return
         }
-        targetDirection = Vector2.Normalize(targetPos - position)
+        // Set default targetDirection forward; RunAI may override it (e.g.
+        // DraggingWindowBack reverses it so the dog walks in backwards).
+        let toTarget = targetPos - position
+        if Vector2.Magnitude(toTarget) > 1.0 {
+            targetDirection = Vector2.Normalize(toTarget)
+        }
         overrideExtendNeck = false
         RunAI()
-        let vector = Vector2.Lerp(Vector2.GetFromAngleDegrees(direction), targetDirection, 0.25)
-        direction = atan2(vector.y, vector.x) * (180 / .pi)
+        // Use whatever targetDirection RunAI left (forward or reversed).
+        // Guard against zero vector: when frozen at target, skip direction
+        // update so direction doesn't drift back to 0° every frame.
+        if Vector2.Magnitude(targetDirection) > 0.1 {
+            let targetAngle = atan2(targetDirection.y, targetDirection.x) * (180 / .pi)
+            var angleDelta = targetAngle - direction
+            if angleDelta >  180 { angleDelta -= 360 }
+            if angleDelta < -180 { angleDelta += 360 }
+            direction += angleDelta * 0.25
+        }
         // During a wander pause, freeze completely. Otherwise the per-frame
         // acceleration toward the (near-but-not-reached) target keeps nudging
         // the position, which reads as a jitter/tremble while "standing still".
@@ -447,6 +466,18 @@ class Goose {
     func GetMainWindowHeight() -> Float { fatalError("abstract") }
 
     private func RunWander() {
+        // Gang-mode: bypass normal Wander AI and walk directly to a fixed destination.
+        if let dest = lockedTarget {
+            targetPos = dest
+            if Vector2.Distance(position, dest) < 20, let cb = onLockedTargetArrival {
+                lockedTarget = nil
+                onLockedTargetArrival = nil
+                cb()
+                // If the callback re-set lockedTarget, the next frame picks it up.
+            }
+            return
+        }
+
         if Time.time - taskWanderInfo.wanderingStartTime > taskWanderInfo.wanderingDuration {
             ChooseNextTask()
         } else if taskWanderInfo.pauseStartTime > 0 {
@@ -505,7 +536,7 @@ class Goose {
                 PlaySound(.CHOMP)
                 taskNabMouseInfo.currentStage = .DraggingMouseAway
             }
-            if !taskNabMouseInfo.hasSaidFrustrated && Time.time > taskNabMouseInfo.chaseStartTime + 2 {
+            if !taskNabMouseInfo.hasSaidFrustrated && Time.time > taskNabMouseInfo.chaseStartTime + 5 {
                 taskNabMouseInfo.hasSaidFrustrated = true
                 Say("아오 좀 멈춰봐")
             }
@@ -756,7 +787,8 @@ class Goose {
         case .CollectWindow_DONOTSET:  RunCollectWindow()
         case .TrackMud:                RunTrackMud()
         case .HeartTrail:              RunHeartTrail()
-        case .CollectWindow_Meme, .CollectWindow_Notepad, .CollectWindow_Donate, .Count:
+        case .CollectWindow_Meme, .CollectWindow_Notepad, .CollectWindow_Donate,
+             .Count:
             break
         }
     }
@@ -893,3 +925,4 @@ class Goose {
         CGPoint(x: CGFloat(Int(vector.x)), y: CGFloat(Int(vector.y)))
     }
 }
+

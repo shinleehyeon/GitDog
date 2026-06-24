@@ -24,13 +24,14 @@ targets:
           - "**/.DS_Store"
           - Resources/**   # resources added separately below
 
-    resources:
-      - path: Sources/DesktopGoose/Resources/Memes
-        buildPhase: resources
-      - path: Sources/DesktopGoose/Resources/Notes
-        buildPhase: resources
-      - path: Resources/AppIcon/AppIcon.icns
-        buildPhase: resources
+    postCompileScripts:
+      - name: Copy App Resources
+        script: |
+          RES="${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/Resources"
+          mkdir -p "$RES"
+          cp -f  "${SRCROOT}/Sources/DesktopGoose/Resources/AppIcon.icns" "$RES/"
+          cp -rf "${SRCROOT}/Sources/DesktopGoose/Resources/Memes" "$RES/"
+          cp -rf "${SRCROOT}/Sources/DesktopGoose/Resources/Notes" "$RES/"
 
     settings:
       base:

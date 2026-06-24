@@ -36,6 +36,9 @@
     <!-- Privacy usage descriptions (required by App Review) -->
     <key>NSNetworkVolumesUsageDescription</key>
     <string>Gipet connects to GitHub to display your contribution streak.</string>
+    <!-- App Store category -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
     <!-- App icon -->
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>

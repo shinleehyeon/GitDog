@@ -9,6 +9,21 @@ import CoreGraphics
 
 final class ChickCharacterView: NSView {
     weak var goose: MacintoshGoose?
+
+    // 0 = original brown, 1 = reddish auburn, 2 = golden honey
+    var coatVariant: Int = 0
+
+    private static let palettes: [(coat: CGColor, dark: CGColor, tan: CGColor)] = [
+        (CGColor(red: 0.57, green: 0.34, blue: 0.19, alpha: 1),
+         CGColor(red: 0.32, green: 0.20, blue: 0.12, alpha: 1),
+         CGColor(red: 0.80, green: 0.60, blue: 0.37, alpha: 1)),
+        (CGColor(red: 0.68, green: 0.24, blue: 0.11, alpha: 1),
+         CGColor(red: 0.38, green: 0.12, blue: 0.06, alpha: 1),
+         CGColor(red: 0.87, green: 0.62, blue: 0.37, alpha: 1)),
+        (CGColor(red: 0.76, green: 0.58, blue: 0.16, alpha: 1),
+         CGColor(red: 0.44, green: 0.32, blue: 0.08, alpha: 1),
+         CGColor(red: 0.94, green: 0.82, blue: 0.50, alpha: 1)),
+    ]
     private static let gooseLikeShadowPattern: CGColor = {
         let cs = CGColorSpaceCreateDeviceRGB()
         guard let bmp = CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
@@ -43,9 +58,10 @@ final class ChickCharacterView: NSView {
         let up = Vector2(0, -1)
 
         // --- Palette ---
-        let coat = CGColor(red: 0.57, green: 0.34, blue: 0.19, alpha: 1)
-        let coatDark = CGColor(red: 0.32, green: 0.20, blue: 0.12, alpha: 1)
-        let tan = CGColor(red: 0.80, green: 0.60, blue: 0.37, alpha: 1)
+        let pal = Self.palettes[coatVariant % Self.palettes.count]
+        let coat = pal.coat
+        let coatDark = pal.dark
+        let tan = pal.tan
         let nose = CGColor(red: 0.07, green: 0.07, blue: 0.07, alpha: 1)
         let bodyCenter = goose.gooseRig.bodyCenter
         let underbodyCenter = goose.gooseRig.underbodyCenter

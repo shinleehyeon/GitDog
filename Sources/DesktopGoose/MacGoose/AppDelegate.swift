@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Gipet — GitHub streak popover + commit watcher.
     private let gipet = MainStatusItemMenuManager()
     private var gooseMenu: NSMenu?
+    private var rightClickMonitor: Any?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Register the gipet:// scheme so the GitHub OAuth callback reaches us.
@@ -59,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installGipet()
         applyCharacterChoice()
         installGlobalHotkey()
+        installRightClickMove()
     }
 
     private func installGipet() {
@@ -96,15 +98,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         gipet.start()
     }
 
+    private func installRightClickMove() {
+        rightClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .rightMouseDown) { [weak self] _ in
+            guard let goose = self?.Goose else { return }
+            let screenPos = NSEvent.mouseLocation
+            let screenH = NSScreen.main?.frame.height ?? 0
+            let gamePos = Vector2(Float(screenPos.x), Float(screenH - screenPos.y))
+            goose.lockedTarget = gamePos
+            goose.onLockedTargetArrival = { }
+            goose.SetTask(.Wander, honck: false)
+            goose.clickIndicatorScreenPos = screenPos
+            goose.clickIndicatorStartTime = Time.time
+        }
+    }
+
     private func installGlobalHotkey() {
         let cmdCtrl = UInt32(cmdKey | controlKey)
         // kVK_ANSI_G = 5  → Cmd+Ctrl+G   → pop the menu near the cursor
         // kVK_ANSI_M = 46 → Cmd+Ctrl+M   → force the goose to fetch a meme right now
+        // kVK_ANSI_B = 11 → Cmd+Ctrl+B   → force the goose to fetch a note right now
         HotkeyManager.shared.register(keyCode: 5,  modifiers: cmdCtrl) { [weak self] in
             self?.popupGooseMenuAtCursor()
         }
         HotkeyManager.shared.register(keyCode: 46, modifiers: cmdCtrl) { [weak self] in
             self?.Goose?.SetTask(.CollectWindow_Meme, honck: false)
+        }
+        HotkeyManager.shared.register(keyCode: 11, modifiers: cmdCtrl) { [weak self] in
+            self?.Goose?.SetTask(.CollectWindow_Notepad, honck: false)
         }
     }
 
@@ -134,9 +154,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let items = try? fm.contentsOfDirectory(at: bundleDir, includingPropertiesForKeys: nil) else { return }
         for src in items {
             let target = dest.appendingPathComponent(src.lastPathComponent)
-            if !fm.fileExists(atPath: target.path) {
-                try? fm.copyItem(at: src, to: target)
-            }
+            try? fm.removeItem(at: target)
+            try? fm.copyItem(at: src, to: target)
         }
     }
 
