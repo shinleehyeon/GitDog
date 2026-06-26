@@ -265,28 +265,28 @@ struct ContributionGrid: View {
         let gridW = CGFloat(max(weeks.count, 1)) * Grid.advance
         let gridH = Grid.squaresTop + 7 * Grid.advance
 
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 4) {
                 // Fixed weekday-label column (stays put while the grid scrolls).
                 ZStack(alignment: .topLeading) {
                     ForEach(0..<7, id: \.self) { row in
                         if !weekdayNames[row].isEmpty {
                             Text(weekdayNames[row])
-                                .font(.system(size: 10, weight: .semibold)).foregroundColor(GipetTheme.inkSoft)
+                                .font(.system(size: 10)).foregroundColor(.secondary)
                                 .offset(y: Grid.squaresTop + CGFloat(row) * Grid.advance - 2)
                         }
                     }
                 }
-                .frame(width: 30, height: gridH, alignment: .topLeading)
+                .frame(width: 26, height: gridH, alignment: .topLeading)
 
                 // Scrollable squares (auto-scrolled to the most recent week).
                 ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: true) {
+                    ScrollView(.horizontal, showsIndicators: false) {
                         ZStack(alignment: .topLeading) {
                             ForEach(monthStarts, id: \.col) { ms in
                                 Text(ms.label)
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(GipetTheme.inkSoft)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.secondary)
                                     .offset(x: CGFloat(ms.col) * Grid.advance, y: 0)
                             }
                             ForEach(Array(weeks.enumerated()), id: \.offset) { col, week in
@@ -294,11 +294,11 @@ struct ContributionGrid: View {
                                     if row < week.count, week[row].count >= 0 {
                                         let day = week[row]
                                         let isHot = hovered == HoverCell(col: col, row: row, day: day)
-                                        RoundedRectangle(cornerRadius: 3)
+                                        RoundedRectangle(cornerRadius: 2)
                                             .fill(GipetTheme.color(level: day.level))
                                             .frame(width: Grid.cell, height: Grid.cell)
                                             .scaleEffect(isHot ? 1.8 : 1.0)
-                                            .shadow(color: .black.opacity(isHot ? 0.3 : 0), radius: 3)
+                                            .shadow(color: .black.opacity(isHot ? 0.5 : 0), radius: 3)
                                             .offset(x: CGFloat(col) * Grid.advance,
                                                     y: Grid.squaresTop + CGFloat(row) * Grid.advance)
                                             .zIndex(isHot ? 2 : 0)
@@ -327,8 +327,6 @@ struct ContributionGrid: View {
             }
             legend.frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(16)
-        .background(GipetTheme.panelBg(18))
     }
 
     private func tooltip(for day: ContributionDay) -> some View {
