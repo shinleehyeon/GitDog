@@ -96,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Stats changed → refresh the menu-bar icon (mood + streak).
         gipet.onStateChange = { [weak self] in
             self?.refreshTitle()
+            self?.Goose?.committedToday = GipetViewModel.shared.stats.committedToday
         }
         gipet.start()
     }

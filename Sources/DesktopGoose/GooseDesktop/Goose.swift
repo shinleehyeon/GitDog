@@ -274,22 +274,13 @@ class Goose {
     private var nextAllowedBringFriendsTime: Float = 30
     var onBringFriendsReturning: (() -> Void)? = nil
     var onBringFriendsArrived: (() -> Void)? = nil
+    var committedToday: Bool = false
 
     // Heavily meme-biased — user wanted the goose to bring memes much more often.
     // CanAttackAtRandom defaults to false, so the NabMouse slots are skipped by
     // ChooseNextTask anyway and effectively re-rolled.
-    private var gooseTaskWeightedList: [GooseTask] = [
-        .CollectWindow_Meme,
-        .CollectWindow_Meme,
-        .CollectWindow_Meme,
-        .CollectWindow_Meme,
-        .CollectWindow_Meme,
-        .CollectWindow_Meme,
-        .TrackMud,
-        .CollectWindow_Notepad
-    ]
-
-    private let taskPickerDeck = Deck(8)
+    private var gooseTaskWeightedList: [GooseTask] = BehaviorSettings.shared.buildWeightedList()
+    private var taskPickerDeck: Deck = Deck(BehaviorSettings.shared.buildWeightedList().count)
 
     var lFootPos: Vector2 = .zero
     var rFootPos: Vector2 = .zero
@@ -758,8 +749,10 @@ class Goose {
             // Even when not triggered, push next check out a bit to avoid repeated rolls.
             nextAllowedNabMouseTime = Time.time + 10
         }
-        if Time.time >= nextAllowedBringFriendsTime {
-            if SamMath.RandomRange(0, 1) < 0.12 {
+        let friendsWeight = BehaviorSettings.shared.friendsWeight
+        if friendsWeight > 0 && !committedToday && Time.time >= nextAllowedBringFriendsTime {
+            let friendsProb = Float(friendsWeight) * 0.04  // 0.04 … 0.20
+            if SamMath.RandomRange(0, 1) < friendsProb {
                 nextAllowedBringFriendsTime = Time.time + SamMath.RandomRange(90, 150)
                 SetTask(.BringFriends, honck: false)
                 return
@@ -769,10 +762,8 @@ class Goose {
         // Prevent hangs: if all weighted tasks are filtered out, fallback to Wander.
         for _ in 0..<(gooseTaskWeightedList.count * 3) {
             let gooseTask = gooseTaskWeightedList[taskPickerDeck.Next()]
-            let blockedByAttackSetting = !GooseConfig.settings.CanAttackAtRandom && gooseTask == .NabMouse
-            let blockedByCollectSetting = !allowAutomaticCollectWindows && isAutomaticCollectWindowTask(gooseTask)
-            let blockedTrackMud = gooseTask == .TrackMud
-            if blockedByAttackSetting || blockedByCollectSetting || blockedTrackMud {
+            let blockedCollect = !allowAutomaticCollectWindows && isAutomaticCollectWindowTask(gooseTask)
+            if blockedCollect {
                 continue
             }
             SetTask(gooseTask)
@@ -791,6 +782,12 @@ class Goose {
 
     // External callers use requestTask — it queues the task if the dog
     // is currently mid-action and applies it when Wander is re-entered.
+    func rebuildBehaviorWeights() {
+        let list = BehaviorSettings.shared.buildWeightedList()
+        gooseTaskWeightedList = list
+        taskPickerDeck = Deck(list.count)
+    }
+
     func requestTask(_ task: GooseTask) {
         guard currentTask != .BringFriends else { return }
         guard currentTask == .Wander else {

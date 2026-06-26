@@ -27,14 +27,29 @@ final class MainStatusItemMenuManager: NSObject {
     /// Called once when we first detect today's commit — the dog celebrates
     /// with a dad-joke speech bubble.
     var onDidCommit: (() -> Void)?
-    // Tracks whether we've already celebrated today's commit, so the joke fires
-    // once per day (reset when today's square goes back to empty).
-    private var didCelebrateCommit = false
+    // Persists whether we've already celebrated today's commit across app restarts.
+    // Stores today's date string so it auto-resets the next calendar day.
+    private static let celebrateDateKey = "Gipet.celebratedCommitDate"
+    private static let celebrateDateFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+    private var didCelebrateCommit: Bool {
+        get {
+            let stored = UserDefaults.standard.string(forKey: Self.celebrateDateKey) ?? ""
+            return stored == Self.celebrateDateFmt.string(from: Date())
+        }
+        set {
+            if newValue {
+                UserDefaults.standard.set(Self.celebrateDateFmt.string(from: Date()), forKey: Self.celebrateDateKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.celebrateDateKey)
+            }
+        }
+    }
     /// Called when the user picks "Dog menu…" inside the popover.
     var onOpenGooseMenu: (() -> Void)?
     /// Called when contribution stats change, so the menu-bar icon can update.
     var onStateChange: (() -> Void)?
-
     private var refreshTimer: Timer?
     private var nudgeTimer: Timer?
     private var sayTimer: Timer?
@@ -86,7 +101,10 @@ final class MainStatusItemMenuManager: NSObject {
             .sink { [weak self] in
                 self?.resizeIfVisible()
                 // Read after SwiftUI applies the change, so stats are current.
-                DispatchQueue.main.async { self?.onStateChange?() }
+                DispatchQueue.main.async {
+                    self?.onStateChange?()
+                    self?.checkAndNudge()
+                }
             }
             .store(in: &cancellables)
     }

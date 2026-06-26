@@ -20,6 +20,7 @@ final class MacintoshGoose: Goose {
     private var lastMemePath: String?
     private var lastNotePath: String?
     private var framerateObserver: NSObjectProtocol?
+    private var behaviorObserver: NSObjectProtocol?
     private var rightClickMonitor: Any?
 
     var clickIndicatorScreenPos: CGPoint? = nil
@@ -60,6 +61,10 @@ final class MacintoshGoose: Goose {
 
         framerateObserver = UserDefaults.standard.observe(forKey: MacGooseSettings.FrameRateKey) { [weak self] in
             self?.StartTimer()
+        }
+        behaviorObserver = NotificationCenter.default.addObserver(
+            forName: .behaviorSettingsChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.rebuildBehaviorWeights()
         }
         StartTimer()
     }

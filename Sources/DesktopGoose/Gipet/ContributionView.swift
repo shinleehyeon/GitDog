@@ -60,7 +60,6 @@ struct ContributionView: View {
     @ObservedObject var model: GipetViewModel
     var onOpenGooseMenu: () -> Void = {}
     var onQuit: () -> Void = {}
-
     var body: some View {
         Group {
             if model.isSignedIn {
@@ -84,7 +83,6 @@ struct ContributionView: View {
         VStack(alignment: .leading, spacing: 16) {
             ProfileHeaderView(model: model)
             ContributionGrid(days: model.days)
-            statPills
             ReposSection(model: model)
             footer
         }
@@ -553,3 +551,6 @@ private func rangeText(_ start: Date?, _ end: Date?, endYear: Bool) -> String {
     let e = fmt(end, endYear ? "MMM d, yyyy" : "MMM d")
     return "\(s) → \(e)"
 }
+
+// MARK: - Behavior settings
+
