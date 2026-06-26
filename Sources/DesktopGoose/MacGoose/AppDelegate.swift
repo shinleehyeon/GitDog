@@ -192,6 +192,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .target = self
         menu.addItem(withTitle: "친구 데려오기",  action: #selector(menuBringFriends), keyEquivalent: "f").target = self
         menu.addItem(.separator())
+
+        // Developer submenu — only visible when devMode flag is set:
+        //   defaults write com.gipet.app GitDog.devMode -bool true
+        if UserDefaults.standard.bool(forKey: "GitDog.devMode") {
+            let devMenu = NSMenu()
+            devMenu.addItem(withTitle: "친구 즉시 소환",    action: #selector(devSpawnFriends),    keyEquivalent: "").target = self
+            devMenu.addItem(withTitle: "하루 상태 초기화",  action: #selector(devResetDaily),      keyEquivalent: "").target = self
+            devMenu.addItem(withTitle: "기여 새로고침",     action: #selector(devForceRefresh),    keyEquivalent: "").target = self
+            devMenu.addItem(withTitle: "강아지 상태 출력",  action: #selector(devPrintGooseState), keyEquivalent: "").target = self
+            let devItem = NSMenuItem(title: "🛠 개발자", action: nil, keyEquivalent: "")
+            devItem.submenu = devMenu
+            menu.addItem(devItem)
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "Quit",       action: #selector(menuQuit), keyEquivalent: "q").target = self
         // Left-click opens the Gipet popover; right-click shows the goose menu.
         self.gooseMenu = menu
@@ -372,6 +386,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func menuTrackMud()   { Goose?.requestTask(.TrackMud) }
     @objc private func menuBringFriends() { Goose?.requestTask(.BringFriends) }
     @objc private func menuQuit()       { NSApp.terminate(nil) }
+
+    // MARK: - Dev actions
+    @objc private func devSpawnFriends() {
+        guard let g = Goose else { return }
+        let screen = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let w = Float(screen.width), h = Float(screen.height)
+        FriendDogManager.shared.spawnFriends(near: Vector2(w / 2, h / 2), screenWidth: w, screenHeight: h)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            FriendDogManager.shared.startDialogue()
+        }
+        NSLog("[DEV] Friends spawned directly")
+    }
+
+    @objc private func devResetDaily()     { gipet.devResetDailyState() }
+    @objc private func devForceRefresh()   { gipet.devForceRefresh() }
+
+    @objc private func devPrintGooseState() {
+        guard let g = Goose else { NSLog("[DEV] No goose"); return }
+        NSLog("[DEV] pos=(%.0f,%.0f) speed=%.0f", g.position.x, g.position.y, g.currentSpeed)
+    }
 
     private func installFriendDogHook() {
         Goose?.onBringFriendsReturning = { [weak self] in

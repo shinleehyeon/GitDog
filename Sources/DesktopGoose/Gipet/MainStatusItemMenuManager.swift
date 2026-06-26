@@ -175,6 +175,18 @@ final class MainStatusItemMenuManager: NSObject {
     }
 
     /// Kick off background refresh + the no-commit watcher.
+    // MARK: - Dev tools
+    func devResetDailyState() {
+        UserDefaults.standard.removeObject(forKey: Self.celebrateDateKey)
+        lastNudgeDate = .distantPast
+        NSLog("[DEV] Daily state reset")
+    }
+
+    func devForceRefresh() {
+        model.refresh()
+        NSLog("[DEV] Contribution refresh triggered")
+    }
+
     func start() {
         model.refresh()
         model.scanRepos()

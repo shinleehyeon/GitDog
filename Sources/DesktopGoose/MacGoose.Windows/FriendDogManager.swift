@@ -10,25 +10,6 @@ final class FriendDogManager {
     static let shared = FriendDogManager()
     private var friends: [FriendDog] = []
 
-    private static let lines0: [String] = [
-        "얘 진짜\n개발자 맞아? ㅋㅋ",
-        "얘 깃허브\n잔디 진짜 없더라",
-        "얘 오늘도\n커밋 0개래 ㅋㅋ",
-        "얘 IDE는\n켜기나 해? ㅋ",
-        "얘 코드가\n뭔지는 알아? ㅋ",
-        "얘 키보드\n먼지 쌓이겠다",
-        "얘 이번달도\n아무것도 안했대",
-    ]
-    private static let lines1: [String] = [
-        "ㄹㅇ ㅋㅋ\n걍 접어라",
-        "ㅋㅋ 진짜\n구제불능이다",
-        "ㄹㅇㅋㅋ 얘\n 왜안함?",
-        "ㅋㅋ \n쪽팔리다",
-        "ㅋㅋㅋ 걍\n 접어",
-        "진짜 ㅋㅋ\n뭐하러 깔았대",
-        "ㄹㅇ 얘 \n왜 안하고 있냐",
-    ]
-
     private static let exitLines: [[String]] = [
         ["에휴\n가야지 ㅉㅉ", "ㅋㅋ 가자 ㅉㅉ", "나 간다\n잘 있어 ㅉㅉ", "에휴 ㅉㅉ.."],
         ["ㅋㅋ 나도\n가야겠다 ㅉㅉ", "ㅉㅉ", "ㅋ 잘있어 ㅉㅉ", "에휴 참..ㅉㅉ"],
@@ -102,47 +83,57 @@ final class FriendDogManager {
         }
     }
 
-    // Called when main dog enters the Chatting stage.
+    // Called when main dog enters the Chatting stage: brief pause → wander → exit.
     func startDialogue() {
         guard friends.count >= 2 else { return }
-        let f0 = friends[0]
-        let f1 = friends[1]
-        let line0 = Self.lines0.randomElement()!
-        let line1 = Self.lines1.randomElement()!
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            f0.dog.Say(line0, duration: 4.0)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
-            f1.dog.Say(line1, duration: 3.5)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 9.5) { [weak self] in
-            self?.walkFriendsOffscreen()
+        for (i, f) in friends.enumerated() {
+            let delay = 2.0 + Double(i) * 0.8
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.wanderThenExit(f, wandersRemaining: 3, index: i)
+            }
         }
     }
 
-    private func walkFriendsOffscreen() {
+    private func wanderThenExit(_ f: FriendDog, wandersRemaining: Int, index: Int) {
+        guard friends.contains(where: { $0 === f }) else { return }
+        guard wandersRemaining > 0 else {
+            exitFriend(f, index: index)
+            return
+        }
+        let screen = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let w = Float(screen.width)
+        let h = Float(screen.height)
+        let margin: Float = 120
+        let tx = Float.random(in: margin...(w - margin))
+        let ty = Float.random(in: margin...(h - margin))
+        f.dog.currentSpeed = 80
+        f.dog.walkTo(Vector2(tx, ty)) { [weak self] in
+            let pause = Double.random(in: 0.8...2.0)
+            DispatchQueue.main.asyncAfter(deadline: .now() + pause) {
+                self?.wanderThenExit(f, wandersRemaining: wandersRemaining - 1, index: index)
+            }
+        }
+    }
+
+    private func exitFriend(_ f: FriendDog, index: Int) {
+        guard friends.contains(where: { $0 === f }) else { return }
         let w = friends.first?.dog.GetMainWindowWidth() ?? 1440
-        for (i, f) in friends.enumerated() {
-            let delay = Double(i) * 2.0
-            let line = Self.exitLines[i].randomElement()!
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                f.dog.Say(line, duration: 2.5)
+        let safeIndex = min(index, Self.exitLines.count - 1)
+        let line = Self.exitLines[safeIndex].randomElement()!
+        f.dog.Say(line, duration: 2.5)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
+            guard let self else { return }
+            let offTarget: Vector2
+            switch self.spawnEdge {
+            case .left:  offTarget = Vector2(-90, f.dog.position.y)
+            case .right: offTarget = Vector2(w + 90, f.dog.position.y)
+            case .top:   offTarget = Vector2(f.dog.position.x, -90)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay + 1.8) { [weak self] in
-                guard let self else { return }
-                let offTarget: Vector2
-                switch self.spawnEdge {
-                case .left:  offTarget = Vector2(-90, f.dog.position.y)
-                case .right: offTarget = Vector2(w + 90, f.dog.position.y)
-                case .top:   offTarget = Vector2(f.dog.position.x, -90)
-                }
-                f.dog.walkTo(offTarget) { [weak self] in
-                    f.dog.dismiss()
-                    self?.friends.removeAll { $0 === f }
-                }
-                f.dog.currentSpeed = 80
+            f.dog.walkTo(offTarget) { [weak self] in
+                f.dog.dismiss()
+                self?.friends.removeAll { $0 === f }
             }
+            f.dog.currentSpeed = 80
         }
     }
 
