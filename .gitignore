@@ -2,9 +2,13 @@
 .build/
 .swiftpm/
 Gipet.app/
+깃독.app/
+*.app/
 Package.resolved
 *.xcodeproj
 *.xcworkspace
 build/
+DerivedData/
+.claude/
 # GipetSecrets.swift is committed with real credentials.
 # Forks: cp GipetSecrets.swift.template GipetSecrets.swift and fill in your own.
