@@ -452,7 +452,7 @@ struct ReposSection: View {
             }
 
             if model.repos.isEmpty {
-                Text("Add a local git repo to get a one-click commit & push (with an AI-written message).")
+                Text("로컬 git 레포를 추가하면 AI 커밋 메시지와 함께 원클릭으로 커밋 & 푸시할 수 있어요.")
                     .font(.system(size: 11)).foregroundColor(GipetTheme.inkSoft)
             } else {
                 VStack(spacing: 8) {
