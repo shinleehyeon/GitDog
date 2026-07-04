@@ -59,6 +59,7 @@ enum GitService {
 
     @discardableResult
     static func commitAndPush(_ path: String, message: String) async -> GitResult {
+        ensureGitUserConfig(repoPath: path)
         stageAll(repoPath: path)
         do {
             let repo = try Repository.open(at: URL(fileURLWithPath: path))
@@ -71,6 +72,7 @@ enum GitService {
 
     @discardableResult
     static func commitFile(_ path: String, file: String, message: String) async -> GitResult {
+        ensureGitUserConfig(repoPath: path)
         do {
             let repo = try Repository.open(at: URL(fileURLWithPath: path))
             try repo.add(path: file)
@@ -79,6 +81,21 @@ enum GitService {
             return GitResult(ok: false, output: "commit failed: \(error)")
         }
         return await push(repoPath: path)
+    }
+
+    // MARK: - Private: ensure git user config
+
+    // App Sandbox can't read ~/.gitconfig, so write user.name/email into the
+    // repo-local .git/config if missing. Uses GitHub login as the author identity.
+    private static func ensureGitUserConfig(repoPath: String) {
+        let configURL = URL(fileURLWithPath: repoPath)
+            .appendingPathComponent(".git/config")
+        guard var content = try? String(contentsOf: configURL, encoding: .utf8) else { return }
+        guard !content.contains("\tname =") && !content.contains("    name =") else { return }
+        let login = TokenStore.shared.cachedLogin ?? "gipet-user"
+        let email = "\(login)@users.noreply.github.com"
+        content += "\n[user]\n\tname = \(login)\n\temail = \(email)\n"
+        try? content.write(to: configURL, atomically: true, encoding: .utf8)
     }
 
     // MARK: - Private: stage all

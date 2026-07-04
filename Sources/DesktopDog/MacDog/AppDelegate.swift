@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        WatchedReposStore.restoreAccess()
         GitDogConfig.settings = MacDogSettings()
         seedBundleResources()
         gitDog = MacintoshGitDog(memesDirectory: MemesDirectory.path,

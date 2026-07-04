@@ -124,12 +124,13 @@ final class GipetViewModel: ObservableObject {
     // MARK: - Watched repos
 
     /// Add a folder (must be a git repo) to the watch list, then rescan.
-    func addRepo(path: String) {
+    func addRepo(url: URL) {
+        let path = url.path
         guard GitService.isGitRepo(path) else {
             errorText = "Not a git repository: \(path)"
             return
         }
-        WatchedReposStore.add(path)
+        WatchedReposStore.add(url)
         scanRepos()
     }
 
@@ -210,16 +211,28 @@ final class GipetViewModel: ObservableObject {
 
         if !FileManager.default.fileExists(atPath: fileURL.path) {
             let header = "# Gipet Journal 📓\n\n"
-            try? (header + entry).write(to: fileURL, atomically: true, encoding: .utf8)
+            do {
+                try (header + entry).write(to: fileURL, atomically: true, encoding: .utf8)
+                NSLog("[Gipet] journal created: %@", fileURL.path)
+            } catch {
+                NSLog("[Gipet] journal create failed: %@", error.localizedDescription)
+                return GitResult(ok: false, output: "could not create \(fileName): \(error.localizedDescription)")
+            }
         } else if let handle = try? FileHandle(forWritingTo: fileURL) {
             handle.seekToEndOfFile()
             handle.write(entry.data(using: .utf8) ?? Data())
             try? handle.close()
+            NSLog("[Gipet] journal appended: %@", fileURL.path)
         } else {
+            let readable = FileManager.default.isReadableFile(atPath: fileURL.path)
+            let writable = FileManager.default.isWritableFile(atPath: fileURL.path)
+            NSLog("[Gipet] journal write failed — readable=%d writable=%d path=%@", readable, writable, fileURL.path)
             return GitResult(ok: false, output: "could not write \(fileName)")
         }
         let dfMsg = DateFormatter(); dfMsg.dateFormat = "yyyy-MM-dd"
-        return await GitService.commitFile(path, file: fileName, message: "docs: journal \(dfMsg.string(from: Date()))")
+        let result = await GitService.commitFile(path, file: fileName, message: "docs: journal \(dfMsg.string(from: Date()))")
+        NSLog("[Gipet] commitFile result: ok=%d output=%@", result.ok, result.output)
+        return result
     }
 
     private func fallbackJournalLine() -> String {

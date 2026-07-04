@@ -440,7 +440,7 @@ struct ReposSection: View {
                 Text("Repos").font(.system(size: 20, weight: .bold)).foregroundColor(GipetTheme.ink)
                 Spacer()
                 Button {
-                    if let path = pickFolder() { model.addRepo(path: path) }
+                    if let url = pickFolder() { model.addRepo(url: url) }
                 } label: {
                     Text("+ Add folder")
                         .font(.system(size: 13, weight: .bold))
@@ -462,13 +462,13 @@ struct ReposSection: View {
         }
     }
 
-    private func pickFolder() -> String? {
+    private func pickFolder() -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Watch"
-        return panel.runModal() == .OK ? panel.url?.path : nil
+        return panel.runModal() == .OK ? panel.url : nil
     }
 }
 
