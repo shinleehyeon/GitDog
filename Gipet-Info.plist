@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>깃독</string>
+    <string>GitDog</string>
     <key>CFBundleDisplayName</key>
-    <string>깃독</string>
+    <string>GitDog</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>

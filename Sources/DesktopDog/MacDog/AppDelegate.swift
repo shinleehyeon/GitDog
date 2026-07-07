@@ -58,6 +58,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                notesDirectory: NotesDirectory.path)
         NSApplication.shared.activate(ignoringOtherApps: true)
         installStatusItem()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            OnboardingWindow.showIfNeeded()
+        }
         installGipet()
         applyCharacterChoice()
         installRightClickMove()
