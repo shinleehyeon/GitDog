@@ -60,37 +60,44 @@ final class GitHubDataProvider {
         }
 
         // Overlay today's count from GraphQL (authenticated, not CDN-cached)
-        // so private repo commits are reflected immediately.
-        let htmlTodayCount = days.first(where: { Calendar.current.isDateInToday($0.date) })?.count ?? 0
-        // Each overlay source is fetched independently — a failure/throw in one
-        // (rate limit, decode error, no token) must not discard a successful
-        // result from the other, or we'd silently fall back to the stale
-        // CDN-cached html count and flicker back down on transient errors.
+        // so private repo commits are reflected immediately. Each overlay
+        // source is fetched independently — a failure/throw in one (rate
+        // limit, decode error, no token) must not discard a successful result
+        // from the other, or we'd silently fall back to the stale CDN-cached
+        // html count and flicker back down on transient errors.
         let eventsCount = (try? await fetchTodayPushCount(login: login)) ?? 0
-        let cal = Calendar.current
         let graphqlTodayCount: Int
         if let graphqlDays = try? await fetchViaGraphQL() {
-            graphqlTodayCount = graphqlDays.first(where: { cal.isDateInToday($0.date) })?.count ?? 0
+            graphqlTodayCount = graphqlDays.first(where: { Calendar.current.isDateInToday($0.date) })?.count ?? 0
         } else {
             graphqlTodayCount = 0
         }
-        let bestCount = max(htmlTodayCount, eventsCount, graphqlTodayCount)
-        NSLog("[Gipet] today: html=%d events=%d graphql=%d", htmlTodayCount, eventsCount, graphqlTodayCount)
-        if bestCount > htmlTodayCount {
-            var foundToday = false
-            days = days.map { d in
-                guard cal.isDateInToday(d.date) else { return d }
-                foundToday = true
-                return ContributionDay(date: d.date, count: bestCount, level: max(d.level, 1))
-            }
-            // Today's entry may be absent from the HTML calendar (CDN lag / new day).
-            if !foundToday {
-                days.append(ContributionDay(date: Date(), count: bestCount, level: min(bestCount, 4)))
-                days.sort { $0.date < $1.date }
-            }
-        }
+        NSLog("[Gipet] today: events=%d graphql=%d", eventsCount, graphqlTodayCount)
+        return Self.applyTodayOverlay(days: days, eventsCount: eventsCount, graphqlTodayCount: graphqlTodayCount)
+    }
 
-        return days
+    /// Overlay the best (max) of html/events/graphql today-counts onto `days`.
+    /// Pure/no I/O so it's unit testable independent of network timing — see
+    /// GitHubDataProviderOverlayTests.
+    static func applyTodayOverlay(days: [ContributionDay], eventsCount: Int, graphqlTodayCount: Int,
+                                   calendar: Calendar = .current, now: Date = Date()) -> [ContributionDay] {
+        let htmlTodayCount = days.first(where: { calendar.isDateInToday($0.date) })?.count ?? 0
+        let bestCount = max(htmlTodayCount, eventsCount, graphqlTodayCount)
+        guard bestCount > htmlTodayCount else { return days }
+
+        var result = days
+        var foundToday = false
+        result = result.map { d in
+            guard calendar.isDateInToday(d.date) else { return d }
+            foundToday = true
+            return ContributionDay(date: d.date, count: bestCount, level: max(d.level, 1))
+        }
+        // Today's entry may be absent from the HTML calendar (CDN lag / new day).
+        if !foundToday {
+            result.append(ContributionDay(date: now, count: bestCount, level: min(bestCount, 4)))
+            result.sort { $0.date < $1.date }
+        }
+        return result
     }
 
     private static var currentYear: Int {

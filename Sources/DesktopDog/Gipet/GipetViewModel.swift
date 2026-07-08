@@ -71,12 +71,12 @@ final class GipetViewModel: ObservableObject {
         avatar = nil
     }
 
-    // Bumped at the start of every load() so a slow/overlapping fetch can
-    // detect it's been superseded and avoid overwriting fresher results with
-    // stale ones (e.g. the 30s timer firing again, or a manual refresh, while
-    // a previous fetch is still in flight) — this was showing up as today's
-    // count flickering back to a stale value after already reading correctly.
-    private var loadGeneration = 0
+    // Detects when an in-flight fetch has been superseded by a newer one
+    // started after it (30s timer firing again, manual refresh, etc. while a
+    // previous fetch is still in flight) — without this a slow-but-earlier
+    // fetch can complete AFTER a fast-but-later one and silently overwrite
+    // fresher state with stale data. See LatestWinsGuardTests.
+    private let loadGuard = LatestWinsGuard()
 
     /// Trigger a background refresh of user + contributions.
     func refresh() {
@@ -84,9 +84,26 @@ final class GipetViewModel: ObservableObject {
         Task { await load() }
     }
 
+    /// Merge fresh data with what's currently displayed, keeping today's cell
+    /// from regressing below what's already shown. GitHub's public page is
+    /// CDN-cached and the Events/GraphQL overlays can each independently lag,
+    /// so a fresh fetch can occasionally read a lower "today" value than one
+    /// we already displayed — that's a stale read, not a real decrease, since
+    /// a day's contribution count only ever goes up. Pure/no I/O so it's unit
+    /// testable independent of network timing — see GipetViewModelMergeTests.
+    static func applyMonotonicToday(old: [ContributionDay], fresh: [ContributionDay],
+                                     calendar: Calendar = .current) -> [ContributionDay] {
+        var merged = fresh
+        if let oldToday = old.first(where: { calendar.isDateInToday($0.date) }),
+           let idx = merged.firstIndex(where: { calendar.isDateInToday($0.date) }),
+           oldToday.count > merged[idx].count {
+            merged[idx] = oldToday
+        }
+        return merged
+    }
+
     private func load() async {
-        loadGeneration += 1
-        let generation = loadGeneration
+        let ticket = loadGuard.nextTicket()
         await MainActor.run { self.isLoading = true; self.errorText = nil }
         do {
             // Resolve which login to fetch. With a token we ask the API who we
@@ -101,18 +118,18 @@ final class GipetViewModel: ObservableObject {
             }
             TokenStore.shared.cachedLogin = resolvedUser.login
             let d = try await provider.fetchContributions(login: resolvedUser.login)
-            let s = ContributionStats.compute(from: d)
-            guard generation == loadGeneration else { return }  // superseded — discard
+            guard loadGuard.isLatest(ticket) else { return }  // superseded — discard
             await MainActor.run {
+                let merged = Self.applyMonotonicToday(old: self.days, fresh: d)
                 self.user = resolvedUser
-                self.days = d
-                self.stats = s
+                self.days = merged
+                self.stats = ContributionStats.compute(from: merged)
                 self.isLoading = false
                 self.lastUpdated = Date()
             }
             await loadAvatar(resolvedUser.avatarURL)
         } catch {
-            guard generation == loadGeneration else { return }  // superseded — discard
+            guard loadGuard.isLatest(ticket) else { return }  // superseded — discard
             await MainActor.run {
                 self.errorText = "fetch contribution error: \(error)"
                 self.isLoading = false
