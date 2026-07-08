@@ -71,6 +71,13 @@ final class GipetViewModel: ObservableObject {
         avatar = nil
     }
 
+    // Bumped at the start of every load() so a slow/overlapping fetch can
+    // detect it's been superseded and avoid overwriting fresher results with
+    // stale ones (e.g. the 30s timer firing again, or a manual refresh, while
+    // a previous fetch is still in flight) — this was showing up as today's
+    // count flickering back to a stale value after already reading correctly.
+    private var loadGeneration = 0
+
     /// Trigger a background refresh of user + contributions.
     func refresh() {
         guard isSignedIn else { return }
@@ -78,6 +85,8 @@ final class GipetViewModel: ObservableObject {
     }
 
     private func load() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         await MainActor.run { self.isLoading = true; self.errorText = nil }
         do {
             // Resolve which login to fetch. With a token we ask the API who we
@@ -93,6 +102,7 @@ final class GipetViewModel: ObservableObject {
             TokenStore.shared.cachedLogin = resolvedUser.login
             let d = try await provider.fetchContributions(login: resolvedUser.login)
             let s = ContributionStats.compute(from: d)
+            guard generation == loadGeneration else { return }  // superseded — discard
             await MainActor.run {
                 self.user = resolvedUser
                 self.days = d
@@ -102,6 +112,7 @@ final class GipetViewModel: ObservableObject {
             }
             await loadAvatar(resolvedUser.avatarURL)
         } catch {
+            guard generation == loadGeneration else { return }  // superseded — discard
             await MainActor.run {
                 self.errorText = "fetch contribution error: \(error)"
                 self.isLoading = false

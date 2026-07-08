@@ -163,13 +163,6 @@ Button("Sign out") { model.signOut() }
                 .clipped()
                 .help("GitHub 계정으로 로그인 (OAuth)")
 
-            if let err = model.errorText {
-                Text(err)
-                    .font(.system(size: 10)).foregroundColor(.red).lineLimit(3)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 10)
-            }
-
             // PAT direct input (for reviewers / users who prefer token auth)
             if showPATField {
                 HStack(spacing: 6) {

@@ -224,6 +224,14 @@ class GitDog {
 
     var currentSpeed: Float = 80
     var currentAcceleration: Float = 1300
+
+    // Gentle, organic speed variation while en route — without this the dog
+    // cruises at a dead-constant currentSpeed for the whole leg once it's up
+    // to speed. Smoothly drifts toward a re-rolled target every couple of
+    // seconds instead of jumping, so it reads as natural, not glitchy.
+    private var speedVariation: Float = 1.0
+    private var speedVariationTarget: Float = 1.0
+    private var nextSpeedVariationRerollTime: Float = 0
     var stepTime: Float = 0.2
 
     static let WalkSpeed: Float = 80
@@ -455,8 +463,14 @@ class GitDog {
         if pausedStill {
             velocity = .zero
         } else {
-            if Vector2.Magnitude(velocity) > currentSpeed {
-                velocity = Vector2.Normalize(velocity) * currentSpeed
+            if Time.time >= nextSpeedVariationRerollTime {
+                speedVariationTarget = SamMath.RandomRange(0.85, 1.15)
+                nextSpeedVariationRerollTime = Time.time + SamMath.RandomRange(1.5, 3.0)
+            }
+            speedVariation = SamMath.Lerp(speedVariation, speedVariationTarget, 0.05)
+            let effectiveSpeed = currentSpeed * speedVariation
+            if Vector2.Magnitude(velocity) > effectiveSpeed {
+                velocity = Vector2.Normalize(velocity) * effectiveSpeed
             }
             velocity += Vector2.Normalize(targetPos - position) * currentAcceleration * (1.0 / 120.0)
             position += velocity * inverseFrameRate

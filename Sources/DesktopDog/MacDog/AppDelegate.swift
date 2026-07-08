@@ -66,6 +66,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         applyCharacterChoice()
         installRightClickMove()
         installFriendDogHook()
+        installDevHotkeys()
+    }
+
+    // Developer-only global hotkeys (⌘⌃ + letter) — gated behind the same
+    // devMode flag as the dev menu, so only a dev's machine gets them:
+    //   defaults write com.gipet.app GitDog.devMode -bool true
+    private func installDevHotkeys() {
+        guard UserDefaults.standard.bool(forKey: "GitDog.devMode") else { return }
+        let mods = UInt32(cmdKey | controlKey)
+        HotkeyManager.shared.register(keyCode: UInt32(kVK_ANSI_M), modifiers: mods) { [weak self] in self?.devTriggerMeme() }
+        HotkeyManager.shared.register(keyCode: UInt32(kVK_ANSI_B), modifiers: mods) { [weak self] in self?.devTriggerNote() }
+        HotkeyManager.shared.register(keyCode: UInt32(kVK_ANSI_H), modifiers: mods) { [weak self] in self?.menuHeartTrail() }
+        HotkeyManager.shared.register(keyCode: UInt32(kVK_ANSI_A), modifiers: mods) { [weak self] in self?.menuSpeak() }
+        HotkeyManager.shared.register(keyCode: UInt32(kVK_ANSI_F), modifiers: mods) { [weak self] in self?.menuBringFriends() }
+        HotkeyManager.shared.register(keyCode: UInt32(kVK_ANSI_I), modifiers: mods) { [weak self] in self?.menuNabMouse() }
     }
 
     private func installGipet() {
@@ -415,7 +430,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSLog("[DEV] Friends spawned directly")
     }
 
-    @objc private func devTriggerMeme()    { gitDog?.SetTask(.CollectWindow_Meme,    honck: false) }
+    @objc private func devTriggerMeme() {
+        // Dev trigger always fetches meme #5, not a random one.
+        let url = MemesDirectory.appendingPathComponent("Meme5.png")
+        gitDog?.ShowNextMeme(NSImage(contentsOf: url), url, nil)
+    }
     @objc private func devTriggerNote()    { gitDog?.SetTask(.CollectWindow_Notepad, honck: false) }
     @objc private func devResetDaily()     { gipet.devResetDailyState() }
     @objc private func devForceRefresh()   { gipet.devForceRefresh() }
