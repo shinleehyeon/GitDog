@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         seedBundleResources()
         gitDog = MacintoshGitDog(memesDirectory: MemesDirectory.path,
                                notesDirectory: NotesDirectory.path)
+        gitDog?.Say("ㅎㅇ", duration: 10)
         NSApplication.shared.activate(ignoringOtherApps: true)
         installStatusItem()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -72,7 +73,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // No commit today → send the dog to fetch something: randomly an
         // image (Memes/) or a note (Notes/).
         gipet.onNoCommitNudge = { [weak self] in
-            let task: GitDog.GitDogTask = Bool.random() ? .CollectWindow_Meme : .CollectWindow_Notepad
+            // Weighted by the Meme/Note sliders in Preferences (default 5:1)
+            // instead of a flat coin flip, so meme shows up more often.
+            let memeWeight = max(BehaviorSettings.shared.memeWeight, 0)
+            let noteWeight = max(BehaviorSettings.shared.noteWeight, 0)
+            let total = memeWeight + noteWeight
+            let task: GitDog.GitDogTask
+            if total <= 0 {
+                task = Bool.random() ? .CollectWindow_Meme : .CollectWindow_Notepad
+            } else {
+                task = Int.random(in: 0..<total) < memeWeight ? .CollectWindow_Meme : .CollectWindow_Notepad
+            }
             self?.gitDog?.requestTask(task)
         }
         // Commit reminder bubble — fires once a minute while you haven't committed.

@@ -80,7 +80,7 @@ final class MainStatusItemMenuManager: NSObject {
     // The "커밋해!" reminder bubble — every 5 min.
     private let sayInterval: TimeInterval = 300
     // How often the dog tells a random dad joke for fun.
-    private let jokeInterval: TimeInterval = 600
+    private let jokeInterval: TimeInterval = 180
 
     func configurePopover() {
         let root = ContributionView(

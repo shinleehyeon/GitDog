@@ -37,7 +37,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gipet.app
-        PRODUCT_NAME: Gipet
+        PRODUCT_NAME: GitDog
         INFOPLIST_FILE: Gipet-Info.plist
         CODE_SIGN_ENTITLEMENTS: Gipet.entitlements
         ENABLE_HARDENED_RUNTIME: YES

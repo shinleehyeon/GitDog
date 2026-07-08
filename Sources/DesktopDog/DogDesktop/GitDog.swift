@@ -785,13 +785,13 @@ class GitDog {
         }
         let friendsWeight = BehaviorSettings.shared.friendsWeight
         if friendsWeight > 0 && !committedToday && Time.time >= nextAllowedBringFriendsTime {
-            let friendsProb = Float(friendsWeight) * 0.04  // 0.04 … 0.20
+            let friendsProb = Float(friendsWeight) * 0.10  // 0.10 … 0.50
             if SamMath.RandomRange(0, 1) < friendsProb {
-                nextAllowedBringFriendsTime = Time.time + 120
+                nextAllowedBringFriendsTime = Time.time + 60
                 SetTask(.BringFriends, honck: false)
                 return
             }
-            nextAllowedBringFriendsTime = Time.time + 120
+            nextAllowedBringFriendsTime = Time.time + 60
         }
         // Prevent hangs: if all weighted tasks are filtered out, fallback to Wander.
         for _ in 0..<(dogTaskWeightedList.count * 3) {
