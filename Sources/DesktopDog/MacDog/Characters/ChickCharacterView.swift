@@ -141,7 +141,7 @@ final class ChickCharacterView: NSView {
         // --- Speech bubble (e.g. a "커밋해!" nudge) ---
         if let speech = dog.speechText, !speech.isEmpty {
             drawSpeechBubble(g, text: speech, anchor: dog.dogRig.neckHeadPoint,
-                             up: up, dogPos: dog.position)
+                             up: up, dogPos: dog.position, scale: dog.sizeScale)
         }
 
         g.restoreGState()
@@ -151,7 +151,7 @@ final class ChickCharacterView: NSView {
     // context is y-flipped (see draw()), so the text is rendered through a
     // local flip to keep it upright.
     private func drawSpeechBubble(_ g: CGContext, text: String, anchor: Vector2,
-                                  up: Vector2, dogPos: Vector2) {
+                                  up: Vector2, dogPos: Vector2, scale sizeScale: Float) {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 11),
             .foregroundColor: NSColor.black
@@ -170,44 +170,45 @@ final class ChickCharacterView: NSView {
         // Desired center: above the head (up = (0,-1) in this coord space).
         var cx = CGFloat(anchor.x + up.x * (Float(h) / 2 + 16))
         var cy = CGFloat(anchor.y + up.y * (Float(h) / 2 + 16))
-        // Keep the whole bubble inside the 200×200 character view so it never
-        // clips when the dog walks to the top or an edge. Convert the center to
-        // view space, clamp it, then convert back. (100 matches the fixed
-        // transform offset / the view's half-size — see draw().)
-        let half: CGFloat = 100
+        // Keep the whole bubble inside the character view so it never clips
+        // when the dog walks to the top or an edge. Convert the center to view
+        // space, clamp it, then convert back. (100 is the fixed base-canvas
+        // half-size — see draw() — scaled by sizeScale since the view itself
+        // is now sizeScale*200, and the bubble's own on-screen footprint
+        // (w/h) is scaled by the same draw()-applied CTM scale too.)
+        let scale = CGFloat(sizeScale)
+        let half: CGFloat = 100 * scale
         let m: CGFloat = 3
-        var vx = (cx - CGFloat(dogPos.x)) + half
-        var vy = -(cy - CGFloat(dogPos.y)) + half
-        vx = min(max(vx, w / 2 + m), bounds.width  - w / 2 - m)
-        vy = min(max(vy, h / 2 + m), bounds.height - h / 2 - m)
-        cx = CGFloat(dogPos.x) + (vx - half)
-        cy = CGFloat(dogPos.y) - (vy - half)
+        var vx = ((cx - CGFloat(dogPos.x)) * scale) + half
+        var vy = (-(cy - CGFloat(dogPos.y)) * scale) + half
+        vx = min(max(vx, (w / 2) * scale + m), bounds.width  - (w / 2) * scale - m)
+        vy = min(max(vy, (h / 2) * scale + m), bounds.height - (h / 2) * scale - m)
+        cx = CGFloat(dogPos.x) + (vx - half) / scale
+        cy = CGFloat(dogPos.y) - (vy - half) / scale
         let center = Vector2(Float(cx), Float(cy))
         let rect = CGRect(x: CGFloat(center.x) - w / 2, y: CGFloat(center.y) - h / 2,
                           width: w, height: h)
-        let fill = CGColor(red: 1, green: 1, blue: 1, alpha: 0.96)
-        let edge = CGColor(red: 0.32, green: 0.20, blue: 0.12, alpha: 1)
+        // Soft, cool-tinted chat-bubble look — a gentle drop shadow instead of
+        // a hard outline, and a small rounded tail dot rather than a sharp
+        // triangle.
+        let fill = CGColor(red: 0.94, green: 0.97, blue: 0.99, alpha: 0.98)
+        let shadow = CGColor(red: 0, green: 0, blue: 0, alpha: 0.22)
 
-        // Tail pointing down toward the head (down = +y here).
+        g.saveGState()
+        g.setShadow(offset: CGSize(width: 0, height: 2), blur: 5, color: shadow)
+
+        // Small rounded tail dot pointing down toward the head.
         let bx = CGFloat(center.x)
         let by = CGFloat(center.y) + h / 2
-        g.beginPath()
-        g.move(to: CGPoint(x: bx - 6, y: by - 1))
-        g.addLine(to: CGPoint(x: bx + 6, y: by - 1))
-        g.addLine(to: CGPoint(x: bx, y: by + 8))
-        g.closePath()
         g.setFillColor(fill)
-        g.fillPath()
+        g.fillEllipse(in: CGRect(x: bx - 3, y: by + 2, width: 6, height: 6))
 
         // Rounded bubble body.
-        let body = CGPath(roundedRect: rect, cornerWidth: 7, cornerHeight: 7, transform: nil)
-        g.setFillColor(fill)
+        let cornerRadius = min(14, h / 2)
+        let body = CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
         g.addPath(body)
         g.fillPath()
-        g.setStrokeColor(edge)
-        g.setLineWidth(1.5)
-        g.addPath(body)
-        g.strokePath()
+        g.restoreGState()
 
         // Text — undo the y-flip so glyphs are upright, then stack the lines
         // top-to-bottom centered (y is up here, so line 0 sits highest).

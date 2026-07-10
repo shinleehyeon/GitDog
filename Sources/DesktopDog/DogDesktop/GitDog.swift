@@ -282,7 +282,8 @@ class GitDog {
     private var taskCollectWindowInfo = Task_CollectWindow()
     private var taskTrackMudInfo = Task_TrackMud()
     private var taskHeartTrailInfo = Task_HeartTrail()
-    private var nextAllowedNabMouseTime: Float = 0
+    static let nabMouseInterval: Float = 300  // 5 minutes
+    private var nextAllowedNabMouseTime: Float = nabMouseInterval
     private var taskBringFriendsInfo = Task_BringFriends()
     private var nextAllowedBringFriendsTime: Float = 120
     var onBringFriendsReturning: (() -> Void)? = nil
@@ -416,7 +417,9 @@ class GitDog {
         // resting (sit & stop / wake up).
         let mouseDown = IsLeftMouseDown()
         let cursor = GetCursorPosition()
-        let overDog = Vector2.Distance(position + Vector2(0, 14), cursor) < 30
+        // Hit-test radius scales with the sprite so bigger dogs stay easy to
+        // click and small ones don't get an oversized grab area.
+        let overDog = Vector2.Distance(position + Vector2(0, 14) * sizeScale, cursor) < 30 * sizeScale
         if mouseDown && !lastFrameMouseButtonPressed && overDog {
             mouseDownOnDog = true
             grabStartCursor = cursor
@@ -428,7 +431,9 @@ class GitDog {
                 isResting = false
             }
             if isGrabbed {
-                position = cursor + grabOffset
+                // Trail behind the cursor instead of snapping to it instantly —
+                // reads as a soft, animated drag rather than a rigid attach.
+                position = Vector2.Lerp(position, cursor + grabOffset, 0.35)
                 velocity = .zero
             }
         }
@@ -451,6 +456,18 @@ class GitDog {
         // While held by the cursor, the position already follows it — freeze AI.
         if isGrabbed {
             velocity = .zero
+            // SolveFeet()'s normal walking-gait stepping (one foot at a time,
+            // small per-step distance) can't keep up with how far the body
+            // jumps per frame while being dragged, so the feet visibly detach
+            // and trail behind. Keep them anchored under the body, but add a
+            // small alternating paddle so it reads as a dangling kick rather
+            // than frozen/static feet.
+            let dir = Vector2.GetFromAngleDegrees(direction)
+            let paddle = sin(Time.time * 6) * 4
+            lFootPos = GetFootHome(rightFoot: false) + dir * paddle
+            rFootPos = GetFootHome(rightFoot: true) - dir * paddle
+            lFootMoveTimeStart = -1
+            rFootMoveTimeStart = -1
             SolveFeet()
             return
         }
@@ -812,14 +829,10 @@ class GitDog {
             return
         }
         if allowOccasionalNabMouse && Time.time >= nextAllowedNabMouseTime {
-            // Low probability gate + long cooldown so it happens sometimes, not often.
-            if SamMath.RandomRange(0, 1) < 0.06 {
-                nextAllowedNabMouseTime = Time.time + SamMath.RandomRange(45, 90)
-                SetTask(.NabMouse, honck: false)
-                return
-            }
-            // Even when not triggered, push next check out a bit to avoid repeated rolls.
-            nextAllowedNabMouseTime = Time.time + 10
+            // Fixed interval — nabs the mouse every 5 minutes, not randomly.
+            nextAllowedNabMouseTime = Time.time + Self.nabMouseInterval
+            SetTask(.NabMouse, honck: false)
+            return
         }
         let friendsWeight = BehaviorSettings.shared.friendsWeight
         if friendsWeight > 0 && !committedToday && Time.time >= nextAllowedBringFriendsTime {
