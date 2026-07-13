@@ -268,6 +268,16 @@ class GitDog {
     private var grabStartCursor: Vector2 = .zero
     private var grabOffset: Vector2 = .zero
 
+    // Fling: releasing the mouse while dragging fast launches the dog on a
+    // gravity-arced trajectory instead of just dropping it in place.
+    private var lastGrabCursor: Vector2 = .zero
+    private var throwVelocity: Vector2 = .zero
+    private var isThrown: Bool = false
+    private var throwStartY: Float = 0
+    private static let throwGravity: Float = 1400
+    private static let throwSpeedThreshold: Float = 250
+    private static let maxThrowSpeed: Float = 800
+
     // Speech bubble shown above the dog (e.g. a "커밋해!" nudge). Read by the
     // character view each frame; cleared automatically when it expires.
     private(set) var speechText: String? = nil
@@ -424,6 +434,8 @@ class GitDog {
             mouseDownOnDog = true
             grabStartCursor = cursor
             grabOffset = position - cursor
+            lastGrabCursor = cursor
+            throwVelocity = .zero
         }
         if mouseDown && mouseDownOnDog {
             if !isGrabbed && Vector2.Distance(cursor, grabStartCursor) > 6 {
@@ -435,14 +447,30 @@ class GitDog {
                 // reads as a soft, animated drag rather than a rigid attach.
                 position = Vector2.Lerp(position, cursor + grabOffset, 0.35)
                 velocity = .zero
+                // Track release velocity from the cursor's own motion (not the
+                // lerped position) so a fast fling reads as fast even though
+                // the body itself trails behind smoothly.
+                let instantVelocity = (cursor - lastGrabCursor) / inverseFrameRate
+                throwVelocity = Vector2.Lerp(throwVelocity, instantVelocity, 0.5)
+                lastGrabCursor = cursor
             }
         }
         if !mouseDown && lastFrameMouseButtonPressed {
             if isGrabbed {
-                // Dropped — carry on wandering from the new spot.
                 isGrabbed = false
-                targetPos = position
-                SetTask(.Wander, honck: false)
+                let flingSpeed = Vector2.Magnitude(throwVelocity)
+                if flingSpeed > Self.throwSpeedThreshold {
+                    // Flung — launch on a gravity-arced trajectory. Damped and
+                    // capped so a fast flick doesn't send it rocketing off.
+                    isThrown = true
+                    let launchSpeed = min(flingSpeed * 0.85, Self.maxThrowSpeed)
+                    velocity = Vector2.Normalize(throwVelocity) * launchSpeed
+                    throwStartY = position.y
+                } else {
+                    // Gently dropped — carry on wandering from the new spot.
+                    targetPos = position
+                    SetTask(.Wander, honck: false)
+                }
             } else if mouseDownOnDog {
                 // A tap → toggle sit/stop.
                 isResting.toggle()
@@ -478,6 +506,37 @@ class GitDog {
             targetPos = position
             SolveFeet()
             return
+        }
+        // Airborne after a fling: integrate gravity until it comes back down
+        // to about the height it was thrown from (or the bottom edge,
+        // whichever it hits first), then land and resume normal AI.
+        if isThrown {
+            velocity.y += Self.throwGravity * inverseFrameRate
+            position += velocity * inverseFrameRate
+            // Never leave the screen — clamp on all sides while airborne.
+            position.x = SamMath.Clamp(position.x, 0, GetMainWindowWidth())
+            position.y = max(position.y, 0)
+            // Fall a solid distance past the launch height (not all the way
+            // to the very bottom every time — that read as too much) unless
+            // the screen bottom is closer, so it never lands off-screen.
+            let landingY = min(throwStartY + 220, GetMainWindowHeight())
+            if velocity.y > 0 && position.y >= landingY {
+                isThrown = false
+                position.y = min(position.y, GetMainWindowHeight())
+                velocity = .zero
+                targetPos = position
+                SetTask(.Wander, honck: false)
+                // Landed — fall through to normal AI/foot-solve below.
+            } else {
+                let dir = Vector2.GetFromAngleDegrees(direction)
+                let paddle = sin(Time.time * 14) * 4
+                lFootPos = GetFootHome(rightFoot: false) + dir * paddle
+                rFootPos = GetFootHome(rightFoot: true) - dir * paddle
+                lFootMoveTimeStart = -1
+                rFootMoveTimeStart = -1
+                SolveFeet()
+                return
+            }
         }
         // Set default targetDirection forward; RunAI may override it (e.g.
         // DraggingWindowBack reverses it so the dog walks in backwards).
