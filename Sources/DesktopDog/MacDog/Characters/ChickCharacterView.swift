@@ -70,9 +70,6 @@ final class ChickCharacterView: NSView {
 
         g.setLineCap(.round)
 
-        // --- Shadow ---
-        fillEllipse(g, color: Self.gooseLikeShadowPattern, center: dog.position, xR: 20, yR: 15)
-
         // --- Legs (4 legs look) ---
         // Back legs follow goose foot anchors (animated by solver).
         let footL = dog.lFootPos
