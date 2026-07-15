@@ -163,7 +163,7 @@ final class MacintoshGitDog: GitDog {
     private func updateClickThrough() {
         let cursor = GetCursorPosition()
         // Same scaled hit-test radius as Tick()'s overDog check.
-        let overDog = Vector2.Distance(position + Vector2(0, 14) * sizeScale, cursor) < 30 * sizeScale
+        let overDog = Vector2.Distance(position + Vector2(0, 16) * sizeScale, cursor) < 42 * sizeScale
         Window.ignoresMouseEvents = !(overDog || isGrabbed)
     }
 

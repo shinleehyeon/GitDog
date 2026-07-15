@@ -428,8 +428,11 @@ class GitDog {
         let mouseDown = IsLeftMouseDown()
         let cursor = GetCursorPosition()
         // Hit-test radius scales with the sprite so bigger dogs stay easy to
-        // click and small ones don't get an oversized grab area.
-        let overDog = Vector2.Distance(position + Vector2(0, 14) * sizeScale, cursor) < 30 * sizeScale
+        // click and small ones don't get an oversized grab area. Generously
+        // sized (not just a small circle around the chest) so clicking the
+        // head/ears/legs — which extend a fair way from `position` — still
+        // registers as "on the dog".
+        let overDog = Vector2.Distance(position + Vector2(0, 16) * sizeScale, cursor) < 42 * sizeScale
         if mouseDown && !lastFrameMouseButtonPressed && overDog {
             mouseDownOnDog = true
             grabStartCursor = cursor
