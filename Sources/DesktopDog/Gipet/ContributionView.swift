@@ -61,6 +61,8 @@ struct ContributionView: View {
     @ObservedObject var model: GipetViewModel
     var onOpenDogMenu: () -> Void = {}
     var onQuit: () -> Void = {}
+    @State private var refreshHovered = false
+    @State private var gearHovered = false
     var body: some View {
         Group {
             if model.isSignedIn {
@@ -120,8 +122,11 @@ struct ContributionView: View {
                 Label("Refresh", systemImage: "arrow.clockwise")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(GipetTheme.green)
+                    .opacity(refreshHovered ? 0.7 : 1)
             }
             .buttonStyle(.plain)
+            .animation(.easeOut(duration: 0.12), value: refreshHovered)
+            .onHover { refreshHovered = $0 }
             if model.isLoading { ProgressView().controlSize(.small) }
             Spacer()
             if let updated = model.lastUpdated {
@@ -136,11 +141,15 @@ struct ContributionView: View {
                 Divider()
                 Button("Quit", action: onQuit)
             } label: {
-                Image(systemName: "gearshape.fill").foregroundColor(GipetTheme.inkSoft)
+                Image(systemName: "gearshape.fill")
+                    .foregroundColor(gearHovered ? GipetTheme.ink : GipetTheme.inkSoft)
+                    .scaleEffect(gearHovered ? 1.1 : 1)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .animation(.easeOut(duration: 0.12), value: gearHovered)
+            .onHover { gearHovered = $0 }
         }
     }
 
@@ -473,6 +482,7 @@ struct DogSizeSlider: View {
 
 struct ReposSection: View {
     @ObservedObject var model: GipetViewModel
+    @State private var addFolderHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -484,11 +494,14 @@ struct ReposSection: View {
                 } label: {
                     Text("+ Add folder")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(GipetTheme.green)
+                        .foregroundColor(addFolderHovered ? GipetTheme.cardBg : GipetTheme.green)
                         .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(Capsule().fill(addFolderHovered ? GipetTheme.green : Color.clear))
                         .overlay(Capsule().strokeBorder(GipetTheme.green.opacity(0.7), lineWidth: 1.5))
                 }
                 .buttonStyle(.plain)
+                .animation(.easeOut(duration: 0.12), value: addFolderHovered)
+                .onHover { addFolderHovered = $0 }
             }
 
             if model.repos.isEmpty {
@@ -515,6 +528,7 @@ struct ReposSection: View {
 struct RepoRow: View {
     @ObservedObject var model: GipetViewModel
     let repo: RepoState
+    @State private var closeHovered = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -537,8 +551,14 @@ struct RepoRow: View {
                     .disabled(!repo.isDirty)
                 Button {
                     model.removeRepo(repo.path)
-                } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.plain).foregroundColor(GipetTheme.inkSoft)
+                } label: {
+                    Image(systemName: "xmark")
+                        .foregroundColor(closeHovered ? GipetTheme.orange : GipetTheme.inkSoft)
+                        .scaleEffect(closeHovered ? 1.15 : 1)
+                }
+                .buttonStyle(.plain)
+                .animation(.easeOut(duration: 0.12), value: closeHovered)
+                .onHover { closeHovered = $0 }
             }
         }
         .padding(14)
@@ -555,25 +575,50 @@ struct RepoRow: View {
 
 struct GhostPill: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
+        GhostPillBody(configuration: configuration)
+    }
+}
+
+private struct GhostPillBody: View {
+    let configuration: GhostPill.Configuration
+    @State private var isHovered = false
+
+    var body: some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(GipetTheme.inkSoft)
+            .foregroundColor(isHovered ? GipetTheme.ink : GipetTheme.inkSoft)
             .padding(.horizontal, 16).padding(.vertical, 8)
-            .background(Capsule().fill(GipetTheme.cardBg))
-            .overlay(Capsule().strokeBorder(GipetTheme.panelBorder, lineWidth: 1))
+            .background(Capsule().fill(isHovered ? GipetTheme.panel : GipetTheme.cardBg))
+            .overlay(Capsule().strokeBorder(isHovered ? GipetTheme.green.opacity(0.6) : GipetTheme.panelBorder, lineWidth: 1))
+            .scaleEffect(isHovered ? 1.04 : 1)
             .opacity(configuration.isPressed ? 0.6 : 1)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 
 struct SolidPill: ButtonStyle {
     var enabled: Bool
     func makeBody(configuration: Configuration) -> some View {
+        SolidPillBody(configuration: configuration, enabled: enabled)
+    }
+}
+
+private struct SolidPillBody: View {
+    let configuration: SolidPill.Configuration
+    let enabled: Bool
+    @State private var isHovered = false
+
+    var body: some View {
         configuration.label
             .font(.system(size: 13, weight: .bold))
             .foregroundColor(enabled ? .white : GipetTheme.inkSoft)
             .padding(.horizontal, 16).padding(.vertical, 8)
-            .background(Capsule().fill(enabled ? GipetTheme.green : GipetTheme.panel))
+            .background(Capsule().fill(enabled ? (isHovered ? GipetTheme.green.opacity(0.82) : GipetTheme.green) : GipetTheme.panel))
+            .scaleEffect(enabled && isHovered ? 1.04 : 1)
             .opacity(configuration.isPressed ? 0.7 : 1)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 
