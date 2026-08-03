@@ -53,7 +53,7 @@ private struct OnboardingView: View {
 
             Button(action: { window.close() }) {
                 Text("시작하기")
-                    .frame(width: 120)
+                .frame(width: 120)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)

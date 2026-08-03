@@ -453,7 +453,7 @@ class GitDog {
                 // Track release velocity from the cursor's own motion (not the
                 // lerped position) so a fast fling reads as fast even though
                 // the body itself trails behind smoothly.
-                let instantVelocity = (cursor - lastGrabCursor) / inverseFrameRate
+                let instantVelocity = (cursor - lastGrabCursor) / max(Time.deltaTime, 0.0001)
                 throwVelocity = Vector2.Lerp(throwVelocity, instantVelocity, 0.5)
                 lastGrabCursor = cursor
             }
@@ -514,8 +514,8 @@ class GitDog {
         // to about the height it was thrown from (or the bottom edge,
         // whichever it hits first), then land and resume normal AI.
         if isThrown {
-            velocity.y += Self.throwGravity * inverseFrameRate
-            position += velocity * inverseFrameRate
+            velocity.y += Self.throwGravity * Time.deltaTime
+            position += velocity * Time.deltaTime
             // Never leave the screen — clamp on all sides while airborne.
             position.x = SamMath.Clamp(position.x, 0, GetMainWindowWidth())
             position.y = max(position.y, 0)
@@ -575,8 +575,8 @@ class GitDog {
             if Vector2.Magnitude(velocity) > effectiveSpeed {
                 velocity = Vector2.Normalize(velocity) * effectiveSpeed
             }
-            velocity += Vector2.Normalize(targetPos - position) * currentAcceleration * (1.0 / 120.0)
-            position += velocity * inverseFrameRate
+            velocity += Vector2.Normalize(targetPos - position) * currentAcceleration * Time.deltaTime
+            position += velocity * Time.deltaTime
         }
         if currentTask == .HeartTrail && taskHeartTrailInfo.isTracing {
             position = targetPos
@@ -721,7 +721,7 @@ class GitDog {
         }
         if taskNabMouseInfo.currentStage == .Decelerating {
             targetPos = position + Vector2.Normalize(velocity) * 5
-            velocity -= Vector2.Normalize(velocity) * currentAcceleration * 2 * inverseFrameRate
+            velocity -= Vector2.Normalize(velocity) * currentAcceleration * 2 * Time.deltaTime
             if Vector2.Magnitude(velocity) < 80 {
                 SetTask(.Wander)
             }
