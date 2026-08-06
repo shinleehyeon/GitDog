@@ -6,7 +6,6 @@ import CoreGraphics
 
 final class MacintoshGitDog: GitDog {
     private var tickTimer: Timer?
-    private var shadowPattern: CGColor!
     private let memesDirectory: String
     private let notesDirectory: String
     private var settings: MacDogSettings!
@@ -27,6 +26,10 @@ final class MacintoshGitDog: GitDog {
     var clickIndicatorScreenPos: CGPoint? = nil
     var clickIndicatorStartTime: Float = 0
     private var lastDogViewFrame: CGRect = .zero
+    // Previous-frame shrinking footmark/click dirty rects so faded marks get
+    // erased without invalidating the entire fullscreen overlay.
+    private var lastOverlayDirtyRects: [CGRect] = []
+    private var lastCursorClipPoint: CGPoint = .zero
     private var spaceChangeObserver: NSObjectProtocol?
 
     // While asleep/screen-locked/display-off, the tick timer keeps firing
@@ -72,7 +75,6 @@ final class MacintoshGitDog: GitDog {
 
         installCharacterView(for: CharacterSettings.shared.current, into: bg)
 
-        InitShadowPattern()
         settings = GitDogConfig.settings as? MacDogSettings
         sizeScale = Float(AppearanceSettings.shared.sizeScale)
 
@@ -135,13 +137,7 @@ final class MacintoshGitDog: GitDog {
             self.updatePathDrawing()
             FriendDogManager.shared.tickAll()
             let newFrame = self.CalculateGitDogViewFrame()
-            if self.hasFootmarks || self.clickIndicatorScreenPos != nil {
-                self.Window.contentView?.setNeedsDisplay(self.Window.contentView?.frame ?? .zero)
-            } else {
-                // Clear the region the dog (and its speech bubble) just vacated,
-                // otherwise the previous frame's drawing lingers behind it.
-                self.Window.contentView?.setNeedsDisplay(self.lastDogViewFrame.union(newFrame))
-            }
+            self.invalidateOverlay(dogFrame: newFrame)
             self.lastDogViewFrame = newFrame
             self.dogView.frame = newFrame
             self.dogView.setNeedsDisplay(self.dogView.bounds)
@@ -164,7 +160,62 @@ final class MacintoshGitDog: GitDog {
         let cursor = GetCursorPosition()
         // Same scaled hit-test radius as Tick()'s overDog check.
         let overDog = Vector2.Distance(position + Vector2(0, 16) * sizeScale, cursor) < 42 * sizeScale
-        Window.ignoresMouseEvents = !(overDog || isGrabbed)
+        let shouldIgnore = !(overDog || isGrabbed)
+        // Only touch the window property when it actually changes — flipping
+        // ignoresMouseEvents every frame during grab/throw is expensive.
+        if Window.ignoresMouseEvents != shouldIgnore {
+            Window.ignoresMouseEvents = shouldIgnore
+        }
+    }
+
+    // Invalidate only what actually changed. Footmarks are static for most of
+    // their lifetime — only appearance, shrink, and expiry need redraws. The
+    // old path invalidated the entire fullscreen transparent window every frame
+    // whenever any footprint was alive (~8s), which made grab/throw/nab crawl
+    // after the dog had been wandering for a while.
+    private func invalidateOverlay(dogFrame: CGRect) {
+        let content = Window.contentView
+        // Dog trail: clear where it was, paint where it is.
+        content?.setNeedsDisplay(lastDogViewFrame.union(dogFrame))
+
+        // Erase last frame's shrinking/click pixels (covers marks that just expired).
+        for r in lastOverlayDirtyRects {
+            content?.setNeedsDisplay(r)
+        }
+
+        let h = content?.frame.height ?? 0
+        let timeNow = Time.time
+        let pad = CGFloat(6 * sizeScale)
+        let appearWindow = max(inverseFrameRate * 2, 0.034)
+        var current: [CGRect] = []
+        var anyAlive = false
+        current.reserveCapacity(8)
+
+        for mark in footMarks {
+            let fadeStart = mark.time + mark.lifetime
+            let fadeEnd = fadeStart + FootMark.ShrinkTime
+            guard mark.time <= timeNow && timeNow <= fadeEnd else { continue }
+            anyAlive = true
+            let becomingVisible = (timeNow - mark.time) <= appearWindow
+            let shrinking = timeNow >= fadeStart
+            // Stable marks stay put; the dog-trail dirty rect restores them
+            // whenever the dog walks over/off them. Only animate appearance/shrink.
+            guard becomingVisible || shrinking else { continue }
+            let r = CGRect(x: CGFloat(mark.position.x) - pad,
+                           y: h - CGFloat(mark.position.y) - pad,
+                           width: pad * 2, height: pad * 2)
+            content?.setNeedsDisplay(r)
+            current.append(r)
+        }
+
+        if let pos = clickIndicatorScreenPos {
+            let r = CGRect(x: pos.x - 24, y: pos.y - 24, width: 48, height: 48)
+            content?.setNeedsDisplay(r)
+            current.append(r)
+        }
+
+        lastOverlayDirtyRects = current
+        hasFootmarks = anyAlive
     }
 
     // Hold ⌥ (Option) and drag anywhere on screen to trace a path — the dog
@@ -233,11 +284,7 @@ func swapCharacter(to kind: CharacterKind) {
     func tickAndRedraw() {
         Tick()
         let newFrame = CalculateGitDogViewFrame()
-        if hasFootmarks || clickIndicatorScreenPos != nil {
-            Window.contentView?.setNeedsDisplay(Window.contentView?.frame ?? .zero)
-        } else {
-            Window.contentView?.setNeedsDisplay(lastDogViewFrame.union(newFrame))
-        }
+        invalidateOverlay(dogFrame: newFrame)
         lastDogViewFrame = newFrame
         dogView.frame = newFrame
         dogView.setNeedsDisplay(dogView.bounds)
@@ -251,25 +298,14 @@ func swapCharacter(to kind: CharacterKind) {
                       width: half * 2, height: half * 2)
     }
 
-    private func InitShadowPattern() {
-        let cs = CGColorSpaceCreateDeviceRGB()
-        let bmp = CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
-                            bytesPerRow: 8, space: cs,
-                            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)!
-        bmp.clear(CGRect(x: 0, y: 0, width: 2, height: 2))
-        bmp.setFillColor(NSColor.lightGray.cgColor)
-        bmp.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
-        let cgImage = bmp.makeImage()!
-        let image = NSImage(cgImage: cgImage, size: NSSize(width: 2, height: 2))
-        shadowPattern = NSColor(patternImage: image).cgColor
-    }
-
     func RenderFootmarks(_ g: CGContext) {
         g.scaleBy(x: 1, y: -1)
         g.translateBy(x: 0, y: -(Window.contentView?.frame.height ?? 0))
-        var flag = false
         let timeNow = Time.time
         let heartFootmarkColor = CGColor(red: 0.92, green: 0.18, blue: 0.30, alpha: 1)
+        // Solid fill — pattern CGColors are extremely expensive when painting
+        // dozens of ellipses every frame on a transparent fullscreen window.
+        let defaultFootmarkColor = CGColor(gray: 0.75, alpha: 0.55)
         for i in 0..<footMarks.count {
             let markTime = footMarks[i].time
             let markLifetime = footMarks[i].lifetime
@@ -278,13 +314,10 @@ func swapCharacter(to kind: CharacterKind) {
             if markTime <= timeNow && timeNow <= fadeEnd {
                 let fadeProgress = SamMath.Clamp((timeNow - fadeStart) / FootMark.ShrinkTime, 0, 1)
                 let radius = SamMath.Lerp(3 * sizeScale, 0, fadeProgress)
-                let defaultFootmarkColor = shadowPattern ?? NSColor.lightGray.cgColor
                 let markColor = footMarks[i].isHeartTrail ? heartFootmarkColor : defaultFootmarkColor
                 FillCircleFromCenter(g, markColor, footMarks[i].position, Int(radius))
-                flag = true
             }
         }
-        hasFootmarks = flag
     }
 
     override func Render(_ param: Any) {
@@ -464,10 +497,15 @@ func swapCharacter(to kind: CharacterKind) {
     }
 
     override func SetCursorClip(_ rect: CGRect) {
-        if !rect.isEmpty {
-            CGDisplayMoveCursorToPoint(CGMainDisplayID(),
-                                       CGPoint(x: rect.minX, y: rect.minY))
+        guard !rect.isEmpty else { return }
+        let p = CGPoint(x: rect.minX, y: rect.minY)
+        // NabMouse calls this every frame; warping the cursor when it hasn't
+        // meaningfully moved burns input/compositor time and feels like lag.
+        if abs(p.x - lastCursorClipPoint.x) < 0.5 && abs(p.y - lastCursorClipPoint.y) < 0.5 {
+            return
         }
+        lastCursorClipPoint = p
+        CGDisplayMoveCursorToPoint(CGMainDisplayID(), p)
     }
 }
 
