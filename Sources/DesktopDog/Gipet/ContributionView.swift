@@ -63,6 +63,7 @@ struct ContributionView: View {
     var onQuit: () -> Void = {}
     @State private var refreshHovered = false
     @State private var gearHovered = false
+    @State private var ballHovered = false
     var body: some View {
         Group {
             if model.isSignedIn {
@@ -127,6 +128,15 @@ struct ContributionView: View {
             .buttonStyle(.plain)
             .animation(.easeOut(duration: 0.12), value: refreshHovered)
             .onHover { refreshHovered = $0 }
+            Button(action: { model.throwBall() }) {
+                Text("🎾 Ball")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(GipetTheme.green)
+                    .opacity(ballHovered ? 0.7 : 1)
+            }
+            .buttonStyle(.plain)
+            .animation(.easeOut(duration: 0.12), value: ballHovered)
+            .onHover { ballHovered = $0 }
             if model.isLoading { ProgressView().controlSize(.small) }
             Spacer()
             if let updated = model.lastUpdated {

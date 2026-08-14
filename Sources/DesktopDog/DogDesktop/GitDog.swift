@@ -35,6 +35,7 @@ class GitDog {
         case TrackMud
         case HeartTrail
         case BringFriends
+        case Fetch
         case Count
     }
 
@@ -161,6 +162,20 @@ class GitDog {
         var friendsFired: Bool = false
         var chatStartTime: Float = 0
         var chatFired: Bool = false
+    }
+
+    struct Task_Fetch {
+        enum Stage {
+            case WalkingToBall
+            case PickingUp
+            case WalkingBack
+            case Dropping
+        }
+        var stage: Stage = .WalkingToBall
+        var ballPosition: Vector2 = .zero
+        var returnPosition: Vector2 = .zero
+        var pickupFired: Bool = false
+        var dropFired: Bool = false
     }
 
     struct Rig {
@@ -298,6 +313,10 @@ class GitDog {
     private var nextAllowedBringFriendsTime: Float = 120
     var onBringFriendsReturning: (() -> Void)? = nil
     var onBringFriendsArrived: (() -> Void)? = nil
+    private var taskFetchInfo = Task_Fetch()
+    var onBallPickedUp: (() -> Void)? = nil
+    var onBallDropped: ((Vector2) -> Void)? = nil
+    var onBallCarryUpdate: ((Vector2) -> Void)? = nil
     var committedToday: Bool = false
 
     // Heavily meme-biased — user wanted the dog to bring memes much more often.
@@ -339,6 +358,23 @@ class GitDog {
         lockedTarget = dest
         onLockedTargetArrival = onArrival
         ScheduledWanderTime = 9999
+        SetTask(.Wander, honck: false)
+    }
+
+    // Fetch: run to the ball's landing spot, pick it up, and carry it back to
+    // where the throw started. Called by the platform layer once the ball's
+    // throw animation has come to rest.
+    func FetchBall(ballPosition: Vector2, returnPosition: Vector2) {
+        taskFetchInfo = Task_Fetch()
+        taskFetchInfo.ballPosition = ballPosition
+        taskFetchInfo.returnPosition = returnPosition
+        SetTask(.Fetch, honck: false)
+    }
+
+    // Called when the ball is dismissed (e.g. the user removes it) while the
+    // dog is still running it down or carrying it back.
+    func cancelFetch() {
+        guard currentTask == .Fetch else { return }
         SetTask(.Wander, honck: false)
     }
 
@@ -591,6 +627,14 @@ class GitDog {
         _ = Vector2.Magnitude(velocity)
         let num: Float = (overrideExtendNeck || (currentSpeed >= 200)) ? 1 : 0
         dogRig.neckLerpPercent = SamMath.Lerp(dogRig.neckLerpPercent, num, 0.075)
+        if currentTask == .Fetch,
+           taskFetchInfo.stage == .PickingUp || taskFetchInfo.stage == .WalkingBack {
+            onBallCarryUpdate?(mouthPosition())
+        }
+    }
+
+    private func mouthPosition() -> Vector2 {
+        dogRig.head2EndPoint
     }
 
     func GetMainWindowWidth() -> Float { fatalError("abstract") }
@@ -884,6 +928,35 @@ class GitDog {
         }
     }
 
+    private func RunFetch() {
+        switch taskFetchInfo.stage {
+        case .WalkingToBall:
+            if Vector2.Distance(position, targetPos) < 20 {
+                velocity = .zero
+                taskFetchInfo.stage = .PickingUp
+            }
+        case .PickingUp:
+            if !taskFetchInfo.pickupFired {
+                taskFetchInfo.pickupFired = true
+                onBallPickedUp?()
+            }
+            targetPos = taskFetchInfo.returnPosition
+            SetSpeed(.Run)
+            taskFetchInfo.stage = .WalkingBack
+        case .WalkingBack:
+            if Vector2.Distance(position, targetPos) < 20 {
+                velocity = .zero
+                taskFetchInfo.stage = .Dropping
+            }
+        case .Dropping:
+            if !taskFetchInfo.dropFired {
+                taskFetchInfo.dropFired = true
+                onBallDropped?(taskFetchInfo.returnPosition)
+            }
+            SetTask(.Wander, honck: false)
+        }
+    }
+
     private func ChooseNextTask() {
         if !GitDogConfig.settings.CanAttackAtRandom && Time.time < GitDogConfig.settings.FirstWanderTimeSeconds + 1 {
             // Keep startup in normal random wander; avoid forced offscreen run.
@@ -936,7 +1009,7 @@ class GitDog {
     }
 
     func requestTask(_ task: GitDogTask) {
-        guard currentTask != .BringFriends else { return }
+        guard currentTask != .BringFriends && currentTask != .Fetch else { return }
         guard currentTask == .Wander else {
             pendingTask = task
             return
@@ -1017,6 +1090,9 @@ class GitDog {
             taskHeartTrailInfo.startPoint = heartPoint(progress: 0, center: taskHeartTrailInfo.center,
                                                        xScale: taskHeartTrailInfo.xScale, yScale: taskHeartTrailInfo.yScale)
             targetPos = taskHeartTrailInfo.startPoint
+        case .Fetch:
+            SetSpeed(.Run)
+            targetPos = taskFetchInfo.ballPosition
         case .Count:
             break
         }
@@ -1030,6 +1106,7 @@ class GitDog {
         case .TrackMud:                RunTrackMud()
         case .HeartTrail:              RunHeartTrail()
         case .BringFriends:            RunBringFriends()
+        case .Fetch:                   RunFetch()
         case .CollectWindow_Meme, .CollectWindow_Notepad, .CollectWindow_Donate,
              .Count:
             break

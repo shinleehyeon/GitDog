@@ -38,6 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dogMenu: NSMenu?
     private var rightClickMonitor: Any?
 
+    // Fetch-the-ball: user throws it from the popover, the dog runs it down
+    // and carries it back to where it started.
+    private var ballWindow: BallWindow?
+    private var throwBallObserver: NSObjectProtocol?
+    private var ballReturnPosition: Vector2 = .zero
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Register the gipet:// scheme so the GitHub OAuth callback reaches us.
         AppDeeplinkHandler.shared.register()
@@ -67,6 +73,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installRightClickMove()
         installFriendDogHook()
         installDevHotkeys()
+        installBallFetch()
+    }
+
+    private func installBallFetch() {
+        guard let dog = gitDog else { return }
+        dog.onBallPickedUp = { [weak self] in
+            self?.ballWindow?.setInteractive(false)
+        }
+        dog.onBallCarryUpdate = { [weak self] mouthPosition in
+            self?.ballWindow?.place(at: mouthPosition)
+        }
+        dog.onBallDropped = { [weak self] dropPosition in
+            self?.ballWindow?.place(at: dropPosition)
+            self?.ballWindow?.setInteractive(true)
+        }
+        throwBallObserver = NotificationCenter.default.addObserver(
+            forName: .throwBallRequested, object: nil, queue: .main) { [weak self] _ in
+            self?.toggleBall()
+        }
+    }
+
+    private func toggleBall() {
+        if ballWindow != nil {
+            dismissBall()
+        } else {
+            spawnBall()
+        }
+    }
+
+    private func dismissBall() {
+        gitDog?.cancelFetch()
+        ballWindow?.dismiss()
+        ballWindow = nil
+    }
+
+    private func spawnBall() {
+        guard let dog = gitDog else { return }
+        ballWindow?.dismiss()
+        let spawnPos = dog.position + Vector2(40, -20)
+        ballReturnPosition = spawnPos
+        let window = BallWindow(worldPosition: spawnPos,
+                                 worldHeight: { CGFloat(dog.GetMainWindowHeight()) },
+                                 worldWidth: { CGFloat(dog.GetMainWindowWidth()) })
+        window.onLanded = { [weak self] landing in
+            self?.handleBallLanded(at: landing)
+        }
+        ballWindow = window
+    }
+
+    private func handleBallLanded(at landing: Vector2) {
+        guard let dog = gitDog else { return }
+        dog.FetchBall(ballPosition: landing, returnPosition: ballReturnPosition)
     }
 
     // Developer-only global hotkeys (⌘⌃ + letter) — gated behind the same

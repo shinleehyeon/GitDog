@@ -84,6 +84,12 @@ final class GipetViewModel: ObservableObject {
         Task { await load() }
     }
 
+    /// Ask the dog to spawn/throw a ball. Crosses into AppKit territory via
+    /// NotificationCenter, same pattern as behaviorSettingsChanged/appearanceSettingsChanged.
+    func throwBall() {
+        NotificationCenter.default.post(name: .throwBallRequested, object: nil)
+    }
+
     /// Merge fresh data with what's currently displayed, keeping today's cell
     /// from regressing below what's already shown. GitHub's public page is
     /// CDN-cached and the Events/GraphQL overlays can each independently lag,
@@ -282,4 +288,8 @@ final class GipetViewModel: ObservableObject {
         guard let i = repos.firstIndex(where: { $0.path == path }) else { return }
         var r = repos[i]; change(&r); repos[i] = r
     }
+}
+
+extension Notification.Name {
+    static let throwBallRequested = Notification.Name("ThrowBallRequested")
 }
