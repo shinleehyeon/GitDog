@@ -218,6 +218,10 @@ final class GipetViewModel: ObservableObject {
     /// Journal mode: append an AI-written line to `gipet-journal.md` and commit
     /// only that file. Keeps the streak green without touching real code.
     func journalCommit(repo path: String) {
+        // Local-only book mode: when explicitly enabled + a book file exists,
+        // write the book out one paragraph per commit instead of the AI journal.
+        // Off by default, so shipped builds keep the normal journal.
+        if BookSource.isAvailable(forRepo: path) { bookCommit(repo: path); return }
         setBusy(path, true)
         Task {
             let line: String
@@ -267,6 +271,63 @@ final class GipetViewModel: ObservableObject {
         let result = await GitService.commitFile(path, file: fileName, message: "docs: journal \(dfMsg.string(from: Date()))")
         NSLog("[Gipet] commitFile result: ok=%d output=%@", result.ok, result.output)
         return result
+    }
+
+    /// Local book mode: append the next paragraph of the external book file to
+    /// `gipet-journal.md` and commit only that file. Advances the saved index
+    /// only when the commit succeeds.
+    private func bookCommit(repo path: String) {
+        setBusy(path, true)
+        Task {
+            let paras = BookSource.paragraphs(forRepo: path)
+            let idx = BookSource.currentIndex(forRepo: path)
+            guard idx < paras.count else {
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) {
+                        $0.lastResult = "📖 책 끝! (\(paras.count)문단 완료)"
+                    }
+                }
+                return
+            }
+            let para = paras[idx]
+            let result = await appendBookAndCommit(path: path, paragraph: para,
+                                                   index: idx, total: paras.count)
+            await MainActor.run {
+                self.setBusy(path, false)
+                if result.ok { BookSource.setIndex(idx + 1, forRepo: path) }
+                self.updateRepo(path) {
+                    let preview = para.replacingOccurrences(of: "\n", with: " ").prefix(20)
+                    $0.lastResult = result.ok
+                        ? "📖 \(idx + 1)/\(paras.count) — \(preview)…"
+                        : "✗ \(result.output)"
+                    $0.dirtyCount = GitService.dirtyCount(path)
+                }
+            }
+        }
+    }
+
+    private func appendBookAndCommit(path: String, paragraph: String,
+                                     index: Int, total: Int) async -> GitResult {
+        let fileName = "gipet-journal.md"
+        let fileURL = URL(fileURLWithPath: path).appendingPathComponent(fileName)
+        let block = paragraph + "\n\n"
+
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            do {
+                try block.write(to: fileURL, atomically: true, encoding: .utf8)
+            } catch {
+                return GitResult(ok: false, output: "could not create \(fileName): \(error.localizedDescription)")
+            }
+        } else if let handle = try? FileHandle(forWritingTo: fileURL) {
+            handle.seekToEndOfFile()
+            handle.write(block.data(using: .utf8) ?? Data())
+            try? handle.close()
+        } else {
+            return GitResult(ok: false, output: "could not write \(fileName)")
+        }
+
+        return await GitService.commitFile(path, file: fileName, message: "book: \(index + 1)/\(total)")
     }
 
     private func fallbackJournalLine() -> String {
