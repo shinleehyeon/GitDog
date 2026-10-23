@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:desktop-dog}",
+            "name": "Debug DesktopDog",
+            "target": "DesktopDog",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug DesktopDog"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:desktop-dog}",
+            "name": "Release DesktopDog",
+            "target": "DesktopDog",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release DesktopDog"
+        }
+    ]
+}

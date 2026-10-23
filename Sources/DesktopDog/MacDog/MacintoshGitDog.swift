@@ -31,6 +31,8 @@ final class MacintoshGitDog: GitDog {
     private var lastOverlayDirtyRects: [CGRect] = []
     private var lastCursorClipPoint: CGPoint = .zero
     private var spaceChangeObserver: NSObjectProtocol?
+    /// When false, the desktop sprite is ordered out (menu bar stays).
+    private(set) var isPresented = true
 
     // While asleep/screen-locked/display-off, the tick timer keeps firing
     // (only real system sleep suspends the process) — without this, Time.time
@@ -64,7 +66,9 @@ final class MacintoshGitDog: GitDog {
 
         spaceChangeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.Window.orderFrontRegardless()
+            // Don't resurrect a dog the user hid (Hide button / GitDog.visible=false).
+            guard let self, self.isPresented else { return }
+            self.Window.orderFrontRegardless()
         }
 
         let bg = BackgroundView()
@@ -79,7 +83,8 @@ final class MacintoshGitDog: GitDog {
         sizeScale = Float(AppearanceSettings.shared.sizeScale)
 
         framerateObserver = UserDefaults.standard.observe(forKey: MacDogSettings.FrameRateKey) { [weak self] in
-            self?.StartTimer()
+            guard let self, self.isPresented else { return }
+            self.StartTimer()
         }
         behaviorObserver = NotificationCenter.default.addObserver(
             forName: .behaviorSettingsChanged, object: nil, queue: .main) { [weak self] _ in
@@ -100,7 +105,30 @@ final class MacintoshGitDog: GitDog {
                 self?.isAsleep = false
             })
         }
-        StartTimer()
+        isPresented = GipetViewModel.storedDogVisible
+        if isPresented {
+            Window.orderFrontRegardless()
+            StartTimer()
+        } else {
+            Window.orderOut(nil)
+        }
+    }
+
+    /// Hide or show the desktop sprite without quitting the menu-bar app.
+    func setPresented(_ visible: Bool) {
+        // Always apply — even if flag matches, force the window state (space
+        // changes / race can leave a "hidden" dog still on screen).
+        isPresented = visible
+        if visible {
+            Window.alphaValue = 1
+            Window.orderFrontRegardless()
+            if tickTimer == nil { StartTimer() }
+        } else {
+            tickTimer?.invalidate()
+            tickTimer = nil
+            Window.alphaValue = 0
+            Window.orderOut(nil)
+        }
     }
 
     deinit {
@@ -130,7 +158,7 @@ final class MacintoshGitDog: GitDog {
         inverseFrameRate = 1.0 / settings.FrameRate
         tickTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(inverseFrameRate),
                                          repeats: true) { [weak self] _ in
-            guard let self, !self.isAsleep else { return }
+            guard let self, self.isPresented, !self.isAsleep else { return }
             Time.TickTime()
             self.Tick()
             self.updateClickThrough()

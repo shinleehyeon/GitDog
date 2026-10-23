@@ -89,8 +89,13 @@ final class MainStatusItemMenuManager: NSObject {
                 self?.hide()
                 self?.onOpenDogMenu?()
             },
-            onQuit: { NSApp.terminate(nil) })
+            onQuit: { NSApp.terminate(nil) },
+            onContentHeightChange: { [weak self] height in
+                self?.applyContentHeight(height)
+            })
         let host = NSHostingView(rootView: root)
+        // Hug SwiftUI's ideal size so the panel can grow/shrink with content.
+        host.sizingOptions = [.intrinsicContentSize]
         let win = StatusItemWindow(contentView: host)
         win.appearance = NSAppearance(named: .darkAqua)
         self.hosting = host
@@ -109,6 +114,33 @@ final class MainStatusItemMenuManager: NSObject {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    /// Explicit height from SwiftUI (carousel page flip, etc.). Keeps top edge pinned.
+    private func applyContentHeight(_ height: CGFloat) {
+        guard let window, window.isVisible else { return }
+        let h = height > 1 ? height : nil
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window, let host = self.hosting, window.isVisible else { return }
+            host.layoutSubtreeIfNeeded()
+            let size: NSSize
+            if let h {
+                let w = host.fittingSize.width > 1 ? host.fittingSize.width : window.frame.width
+                size = NSSize(width: w, height: h)
+            } else {
+                size = host.fittingSize
+            }
+            guard size.width > 1, size.height > 1 else { return }
+            if abs(size.width - window.frame.width) < 0.5,
+               abs(size.height - window.frame.height) < 0.5 { return }
+            let topLeft = NSPoint(x: window.frame.minX, y: window.frame.maxY)
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.18
+                ctx.allowsImplicitAnimation = true
+                window.setContentSize(size)
+                window.setFrameTopLeftPoint(topLeft)
+            }
+        }
     }
 
     /// Toggle the status-item window anchored to the status-bar button.

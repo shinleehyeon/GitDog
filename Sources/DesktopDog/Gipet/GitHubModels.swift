@@ -28,6 +28,30 @@ struct GitHubUser: Codable, Equatable {
     var displayName: String { name?.isEmpty == false ? name! : login }
 }
 
+/// Breakdown of contribution *types* for the activity overview graph
+/// (Commits / PRs / Code review / Issues) — same axes as the GitHub profile.
+struct ContributionActivity: Equatable {
+    var commits: Int = 0
+    var pullRequests: Int = 0
+    var codeReviews: Int = 0
+    var issues: Int = 0
+
+    var total: Int { commits + pullRequests + codeReviews + issues }
+
+    /// Percent 0…100 for a count; rounds so the four values stay readable.
+    func percent(of count: Int) -> Int {
+        guard total > 0 else { return 0 }
+        return Int((Double(count) / Double(total) * 100.0).rounded())
+    }
+
+    var commitPercent: Int { percent(of: commits) }
+    var pullRequestPercent: Int { percent(of: pullRequests) }
+    var codeReviewPercent: Int { percent(of: codeReviews) }
+    var issuePercent: Int { percent(of: issues) }
+
+    var isEmpty: Bool { total == 0 }
+}
+
 /// Computed streak/total figures shown in StatsView.
 /// Mirrors Git Streaks' `ContributionStats` / `lastYearContributions`.
 struct ContributionStats: Equatable {

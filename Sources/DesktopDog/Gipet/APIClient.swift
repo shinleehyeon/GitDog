@@ -114,10 +114,54 @@ final class APIClient {
         }
     }
 
+    /// Authenticated JSON request (POST/PUT/…) for GitHub REST endpoints.
+    func sendJSON<T: Decodable, Body: Encodable>(
+        _ type: T.Type,
+        _ url: URL,
+        method: String,
+        body: Body
+    ) async throws -> T {
+        try await sendJSON(type, url, method: method, bodyData: try JSONEncoder().encode(body))
+    }
+
+    /// Same as `sendJSON` but with a raw body (or nil for empty-body PUTs).
+    func sendJSON<T: Decodable>(
+        _ type: T.Type,
+        _ url: URL,
+        method: String,
+        bodyData: Data?
+    ) async throws -> T {
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Gipet", forHTTPHeaderField: "User-Agent")
+        if let token = accessToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = bodyData
+        let (data, resp) = try await session.data(for: req)
+        try Self.check(resp)
+        // Some GitHub endpoints return 204 / empty body.
+        if data.isEmpty, T.self == EmptyJSON.self {
+            return EmptyJSON() as! T
+        }
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw APIError.decode(String(describing: error))
+        }
+    }
+
     private static func check(_ resp: URLResponse) throws {
         guard let http = resp as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else { throw APIError.http(http.statusCode) }
     }
+}
+
+/// Placeholder decode target for empty GitHub responses.
+struct EmptyJSON: Decodable {
+    init() {}
 }
 
 extension CharacterSet {

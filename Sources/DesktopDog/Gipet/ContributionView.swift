@@ -57,13 +57,23 @@ private enum Layout {
 
 // MARK: - Root
 
+/// Reported so the status-item window can grow/shrink with content (carousel page, repos…).
+private struct PopoverHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct ContributionView: View {
     @ObservedObject var model: GipetViewModel
     var onOpenDogMenu: () -> Void = {}
     var onQuit: () -> Void = {}
+    var onContentHeightChange: (CGFloat) -> Void = { _ in }
     @State private var refreshHovered = false
     @State private var gearHovered = false
     @State private var ballHovered = false
+    @State private var dogHovered = false
     var body: some View {
         Group {
             if model.isSignedIn {
@@ -73,6 +83,15 @@ struct ContributionView: View {
             }
         }
         .background(GipetTheme.cardBg)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: PopoverHeightKey.self, value: geo.size.height)
+            }
+        )
+        .onPreferenceChange(PopoverHeightKey.self) { h in
+            guard h > 1 else { return }
+            onContentHeightChange(h)
+        }
         .fontDesign(.rounded)
         .environment(\.colorScheme, .dark)
     }
@@ -86,7 +105,8 @@ struct ContributionView: View {
     private var signedIn: some View {
         VStack(alignment: .leading, spacing: 16) {
             ProfileHeaderView(model: model)
-            ContributionGrid(days: model.days)
+            ContributionCarousel(days: model.days, activity: model.activity,
+                                  onPageChange: { onContentHeightChange(0) })
             ReposSection(model: model)
             DogSizeSlider()
             footer
@@ -137,6 +157,16 @@ struct ContributionView: View {
             .buttonStyle(.plain)
             .animation(.easeOut(duration: 0.12), value: ballHovered)
             .onHover { ballHovered = $0 }
+            Button(action: { model.toggleDog() }) {
+                Label(model.dogVisible ? "Hide" : "Show", systemImage: "pawprint.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(GipetTheme.green)
+                    .opacity(dogHovered ? 0.7 : 1)
+            }
+            .buttonStyle(.plain)
+            .animation(.easeOut(duration: 0.12), value: dogHovered)
+            .onHover { dogHovered = $0 }
+            .help(model.dogVisible ? "데스크탑 강아지 끄기" : "데스크탑 강아지 켜기")
             if model.isLoading { ProgressView().controlSize(.small) }
             Spacer()
             if let updated = model.lastUpdated {
@@ -305,6 +335,306 @@ private struct HoverCell: Equatable {
     let col: Int
     let row: Int
     let day: ContributionDay
+}
+
+// MARK: - Contribution carousel (잔디 ↔ 활동 그래프)
+
+private enum ContributionPage: Int, CaseIterable, Identifiable {
+    case grid = 0
+    case activity = 1
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .grid: return "Commits"
+        case .activity: return "Activity"
+        }
+    }
+}
+
+struct ContributionCarousel: View {
+    let days: [ContributionDay]
+    let activity: ContributionActivity
+    var onPageChange: () -> Void = {}
+    @State private var page: ContributionPage = .grid
+    @State private var dragOffset: CGFloat = 0
+
+    private var pageHeight: CGFloat {
+        switch page {
+        case .grid:
+            return Grid.squaresTop + 7 * Grid.advance + 22
+        case .activity:
+            return 248
+        }
+    }
+
+    private func setPage(_ p: ContributionPage) {
+        guard p != page else { return }
+        withAnimation(.easeInOut(duration: 0.22)) {
+            page = p
+            dragOffset = 0
+        }
+        // Let SwiftUI settle, then ask the status window to remeasure.
+        DispatchQueue.main.async { onPageChange() }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                // Segmented: Commits | Activity
+                HStack(spacing: 2) {
+                    ForEach(ContributionPage.allCases) { p in
+                        Button { setPage(p) } label: {
+                            Text(p.title)
+                                .font(.system(size: 12, weight: page == p ? .semibold : .medium))
+                                .foregroundColor(page == p ? GipetTheme.ink : GipetTheme.inkSoft)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(page == p ? GipetTheme.panel : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(3)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.white.opacity(0.04))
+                        .overlay(RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(GipetTheme.panelBorder, lineWidth: 1))
+                )
+
+                Spacer(minLength: 0)
+
+                Button {
+                    setPage(page == .grid ? .activity : .grid)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(page == .grid ? "Activity" : "Commits")
+                            .font(.system(size: 11, weight: .semibold))
+                        Image(systemName: page == .grid ? "chevron.right" : "chevron.left")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .foregroundColor(GipetTheme.green)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule().fill(GipetTheme.greenSoft.opacity(0.55))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(page == .grid ? "활동 그래프로 넘기기" : "잔디로 돌아가기")
+            }
+
+            GeometryReader { geo in
+                let w = geo.size.width
+                HStack(spacing: 0) {
+                    ContributionGrid(days: days)
+                        .frame(width: w, height: pageHeight, alignment: .top)
+                    ActivityOverviewGraph(activity: activity)
+                        .frame(width: w, height: pageHeight)
+                }
+                .frame(height: pageHeight, alignment: .top)
+                .offset(x: -CGFloat(page.rawValue) * w + dragOffset)
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 28)
+                        .onChanged { value in
+                            let raw = value.translation.width
+                            guard abs(raw) > abs(value.translation.height) else { return }
+                            if (page == .grid && raw > 0) || (page == .activity && raw < 0) {
+                                dragOffset = raw * 0.25
+                            } else {
+                                dragOffset = raw
+                            }
+                        }
+                        .onEnded { value in
+                            let threshold = w * 0.18
+                            if value.translation.width < -threshold, page == .grid {
+                                setPage(.activity)
+                            } else if value.translation.width > threshold, page == .activity {
+                                setPage(.grid)
+                            } else {
+                                withAnimation(.easeInOut(duration: 0.22)) { dragOffset = 0 }
+                            }
+                        }
+                )
+            }
+            .frame(height: pageHeight)
+            .clipped()
+            .animation(.easeInOut(duration: 0.22), value: pageHeight)
+        }
+    }
+}
+
+/// GitHub-style activity overview: summary + large 4-axis mix chart.
+struct ActivityOverviewGraph: View {
+    let activity: ContributionActivity
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 20) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Activity overview")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(GipetTheme.ink)
+
+                Text(summaryText)
+                    .font(.system(size: 12))
+                    .foregroundColor(GipetTheme.inkSoft)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ActivityStatRow(label: "Commits", count: activity.commits,
+                                    percent: activity.commitPercent)
+                    ActivityStatRow(label: "Pull requests", count: activity.pullRequests,
+                                    percent: activity.pullRequestPercent)
+                    ActivityStatRow(label: "Code review", count: activity.codeReviews,
+                                    percent: activity.codeReviewPercent)
+                    ActivityStatRow(label: "Issues", count: activity.issues,
+                                    percent: activity.issuePercent)
+                }
+            }
+            .frame(width: 210, alignment: .leading)
+
+            ActivityRadarChart(activity: activity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var summaryText: String {
+        guard !activity.isEmpty else {
+            return "Sign in with a token to see your contribution mix for the last year."
+        }
+        if activity.commitPercent >= 70 {
+            return "Mostly commits this year — \(activity.commits.formatted()) commits out of \(activity.total.formatted()) contributions."
+        }
+        return "\(activity.total.formatted()) contributions across commits, PRs, reviews, and issues."
+    }
+}
+
+private struct ActivityStatRow: View {
+    let label: String
+    let count: Int
+    let percent: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(percent > 0 ? GipetTheme.green : Color.white.opacity(0.15))
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(GipetTheme.inkSoft)
+            Spacer(minLength: 4)
+            Text(count.formatted())
+                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                .foregroundColor(GipetTheme.ink)
+            Text("\(percent)%")
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundColor(percent > 0 ? GipetTheme.green : GipetTheme.inkSoft)
+                .frame(width: 36, alignment: .trailing)
+        }
+    }
+}
+
+private struct ActivityRadarChart: View {
+    let activity: ContributionActivity
+
+    /// Axes matching the GitHub profile: review↑ issues→ PRs↓ commits←
+    private var axes: [(label: String, percent: Int, angle: Double)] {
+        [
+            ("Code review", activity.codeReviewPercent, -.pi / 2),
+            ("Issues", activity.issuePercent, 0),
+            ("Pull requests", activity.pullRequestPercent, .pi / 2),
+            ("Commits", activity.commitPercent, .pi),
+        ]
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            // Keep labels outside the plot; plot uses the remaining square.
+            let labelPad: CGFloat = 36
+            let plot = min(geo.size.width - labelPad * 2, geo.size.height - labelPad * 2)
+            let radius = max(plot * 0.48, 40)
+            let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+
+            ZStack {
+                // Soft panel behind the chart
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(GipetTheme.panel.opacity(0.55))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .strokeBorder(GipetTheme.panelBorder, lineWidth: 1)
+                    )
+
+                Canvas { context, _ in
+                    // Concentric diamonds (25 / 50 / 75 / 100%)
+                    for ring in [0.25, 0.5, 0.75, 1.0] {
+                        var diamond = Path()
+                        for (i, a) in axes.enumerated() {
+                            let p = point(center: center, radius: radius * ring, angle: a.angle)
+                            if i == 0 { diamond.move(to: p) } else { diamond.addLine(to: p) }
+                        }
+                        diamond.closeSubpath()
+                        context.stroke(diamond, with: .color(Color.white.opacity(0.07)), lineWidth: 1)
+                    }
+
+                    // Crosshair axes
+                    var guides = Path()
+                    for a in axes {
+                        guides.move(to: center)
+                        guides.addLine(to: point(center: center, radius: radius, angle: a.angle))
+                    }
+                    context.stroke(guides, with: .color(Color.white.opacity(0.18)), lineWidth: 1)
+
+                    // Data polygon
+                    var poly = Path()
+                    for (i, a) in axes.enumerated() {
+                        let r = radius * CGFloat(max(0, min(100, a.percent))) / 100
+                        let p = point(center: center, radius: max(r, 3), angle: a.angle)
+                        if i == 0 { poly.move(to: p) } else { poly.addLine(to: p) }
+                    }
+                    poly.closeSubpath()
+                    context.fill(poly, with: .color(GipetTheme.green.opacity(0.28)))
+                    context.stroke(poly, with: .color(GipetTheme.green), lineWidth: 2)
+
+                    // Vertex dots
+                    for a in axes {
+                        let r = radius * CGFloat(max(0, min(100, a.percent))) / 100
+                        let p = point(center: center, radius: max(r, 3), angle: a.angle)
+                        let dot = Path(ellipseIn: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7))
+                        context.fill(dot, with: .color(GipetTheme.green))
+                    }
+                }
+
+                ForEach(Array(axes.enumerated()), id: \.offset) { _, a in
+                    let tip = point(center: center, radius: radius + 26, angle: a.angle)
+                    VStack(spacing: 2) {
+                        Text(a.label)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(GipetTheme.inkSoft)
+                        if a.percent > 0 {
+                            Text("\(a.percent)%")
+                                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                .foregroundColor(GipetTheme.green)
+                        }
+                    }
+                    .multilineTextAlignment(.center)
+                    .fixedSize()
+                    .position(tip)
+                }
+            }
+        }
+    }
+
+    private func point(center: CGPoint, radius: CGFloat, angle: Double) -> CGPoint {
+        CGPoint(x: center.x + radius * CGFloat(cos(angle)),
+                y: center.y + radius * CGFloat(sin(angle)))
+    }
 }
 
 struct ContributionGrid: View {
@@ -553,12 +883,15 @@ struct RepoRow: View {
             if repo.isBusy {
                 ProgressView().controlSize(.small)
             } else {
-                Button("Journal") { model.journalCommit(repo: repo.path) }
+                Button("Issue") { model.createIssue(repo: repo.path) }
                     .buttonStyle(GhostPill())
-                    .help("AI가 gipet-journal.md에 한 줄 추가 후 커밋 (코드 안 건드림)")
+                    .help("이슈 하나 열고 바로 닫기 — Activity 그래프 Issues에 반영")
+                Button("PR") { model.createAndMergePR(repo: repo.path) }
+                    .buttonStyle(GhostPill())
+                    .help("변경 없으면 저널/책 한 줄 자동 추가 → 브랜치 → 리뷰 → merge")
                 Button("Commit") { model.commit(repo: repo.path) }
-                    .buttonStyle(SolidPill(enabled: repo.isDirty))
-                    .disabled(!repo.isDirty)
+                    .buttonStyle(SolidPill(enabled: true))
+                    .help("변경 없으면 저널/책 한 줄 자동 추가 후 커밋 & push")
                 Button {
                     model.removeRepo(repo.path)
                 } label: {

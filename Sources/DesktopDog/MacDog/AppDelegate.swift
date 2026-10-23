@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // and carries it back to where it started.
     private var ballWindow: BallWindow?
     private var throwBallObserver: NSObjectProtocol?
+    private var dogVisibilityObserver: NSObjectProtocol?
     private var ballReturnPosition: Vector2 = .zero
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -62,7 +63,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         seedBundleResources()
         gitDog = MacintoshGitDog(memesDirectory: MemesDirectory.path,
                                notesDirectory: NotesDirectory.path)
-        gitDog?.Say("ㅎㅇ", duration: 10)
+        dogVisibilityObserver = NotificationCenter.default.addObserver(
+            forName: .dogVisibilityChanged, object: nil, queue: .main) { [weak self] note in
+            let visible = (note.userInfo?["visible"] as? Bool) ?? true
+            self?.applyDogVisibility(visible)
+        }
+        applyDogVisibility(GipetViewModel.shared.dogVisible)
+        if GipetViewModel.shared.dogVisible {
+            gitDog?.Say("ㅎㅇ", duration: 10)
+        }
         NSApplication.shared.activate(ignoringOtherApps: true)
         installStatusItem()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -106,6 +115,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         gitDog?.cancelFetch()
         ballWindow?.dismiss()
         ballWindow = nil
+    }
+
+    /// Desktop sprite only. The status item and popover stay up.
+    private func applyDogVisibility(_ visible: Bool) {
+        if visible {
+            gitDog?.setPresented(true)
+        } else {
+            dismissBall()
+            FriendDogManager.shared.dismissAll()
+            gitDog?.setPresented(false)
+        }
     }
 
     private func spawnBall() {

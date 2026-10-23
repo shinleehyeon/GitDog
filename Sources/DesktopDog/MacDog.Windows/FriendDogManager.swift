@@ -24,11 +24,15 @@ final class FriendDogManager {
     private var spawnEdge: SpawnEdge = .left
     private init() {}
 
+    func dismissAll() {
+        for f in friends { f.dog.dismiss() }
+        friends = []
+    }
+
     // Spawns 2 friend dogs from the same off-screen position as the main dog.
     // `pos` is the main dog's position at the moment it turned back (deep off-screen).
     func spawnFriends(near pos: Vector2, screenWidth w: Float, screenHeight h: Float) {
-        for f in friends { f.dog.dismiss() }
-        friends = []
+        dismissAll()
 
         let distL = pos.x
         let distR = w - pos.x

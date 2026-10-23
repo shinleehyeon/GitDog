@@ -164,7 +164,7 @@ final class GitHubDataProvider {
 
     // MARK: - GraphQL
 
-    private struct GraphQLResponse: Decodable {
+    private struct GraphQLCalendarResponse: Decodable {
         struct DataField: Decodable { let viewer: Viewer }
         struct Viewer: Decodable { let contributionsCollection: Collection }
         struct Collection: Decodable { let contributionCalendar: Calendar }
@@ -178,23 +178,21 @@ final class GitHubDataProvider {
         let data: DataField
     }
 
-    func fetchViaGraphQL() async throws -> [ContributionDay] {
-        guard let token = api.accessToken else { throw APIError.decode("no token") }
-        guard let url = URL(string: "https://api.github.com/graphql") else { throw APIError.badURL }
-        let query = "query{viewer{contributionsCollection{contributionCalendar{weeks{contributionDays{date contributionCount contributionLevel}}}}}}"
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Gipet", forHTTPHeaderField: "User-Agent")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
-
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw APIError.http(http.statusCode)
+    private struct GraphQLActivityResponse: Decodable {
+        struct DataField: Decodable { let viewer: Viewer }
+        struct Viewer: Decodable { let contributionsCollection: Totals }
+        struct Totals: Decodable {
+            let totalCommitContributions: Int
+            let totalPullRequestContributions: Int
+            let totalPullRequestReviewContributions: Int
+            let totalIssueContributions: Int
         }
-        let decoded = try JSONDecoder().decode(GraphQLResponse.self, from: data)
+        let data: DataField
+    }
+
+    func fetchViaGraphQL() async throws -> [ContributionDay] {
+        let decoded = try await postGraphQL(GraphQLCalendarResponse.self, query:
+            "query{viewer{contributionsCollection{contributionCalendar{weeks{contributionDays{date contributionCount contributionLevel}}}}}}")
 
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
@@ -211,6 +209,35 @@ final class GitHubDataProvider {
             }
         }
         return days.sorted { $0.date < $1.date }
+    }
+
+    /// Commits / PRs / reviews / issues totals for the activity overview graph.
+    func fetchContributionActivity() async throws -> ContributionActivity {
+        let decoded = try await postGraphQL(GraphQLActivityResponse.self, query:
+            "query{viewer{contributionsCollection{totalCommitContributions totalPullRequestContributions totalPullRequestReviewContributions totalIssueContributions}}}")
+        let c = decoded.data.viewer.contributionsCollection
+        return ContributionActivity(
+            commits: c.totalCommitContributions,
+            pullRequests: c.totalPullRequestContributions,
+            codeReviews: c.totalPullRequestReviewContributions,
+            issues: c.totalIssueContributions
+        )
+    }
+
+    private func postGraphQL<T: Decodable>(_ type: T.Type, query: String) async throws -> T {
+        guard let token = api.accessToken else { throw APIError.decode("no token") }
+        guard let url = URL(string: "https://api.github.com/graphql") else { throw APIError.badURL }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Gipet", forHTTPHeaderField: "User-Agent")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw APIError.http(http.statusCode)
+        }
+        return try JSONDecoder().decode(T.self, from: data)
     }
 
     private static func level(from level: String) -> Int {

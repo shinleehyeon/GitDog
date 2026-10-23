@@ -12,10 +12,14 @@ final class GipetViewModel: ObservableObject {
     @Published var user: GitHubUser?
     @Published var days: [ContributionDay] = []
     @Published var stats = ContributionStats()
+    /// Commits / PRs / reviews / issues mix for the activity graph page.
+    @Published var activity = ContributionActivity()
     @Published var avatar: NSImage?
     @Published var isLoading = false
     @Published var errorText: String?
     @Published var lastUpdated: Date?
+    /// Desktop sprite. The menu-bar popover stays up either way.
+    @Published var dogVisible: Bool = GipetViewModel.storedDogVisible
 
     // Watched git repos (one-click commit feature).
     @Published var repos: [RepoState] = []
@@ -68,6 +72,7 @@ final class GipetViewModel: ObservableObject {
         user = nil
         days = []
         stats = ContributionStats()
+        activity = ContributionActivity()
         avatar = nil
     }
 
@@ -87,7 +92,20 @@ final class GipetViewModel: ObservableObject {
     /// Ask the dog to spawn/throw a ball. Crosses into AppKit territory via
     /// NotificationCenter, same pattern as behaviorSettingsChanged/appearanceSettingsChanged.
     func throwBall() {
+        if !dogVisible { setDogVisible(true) }
         NotificationCenter.default.post(name: .throwBallRequested, object: nil)
+    }
+
+    func toggleDog() {
+        setDogVisible(!dogVisible)
+    }
+
+    func setDogVisible(_ visible: Bool) {
+        guard dogVisible != visible else { return }
+        dogVisible = visible
+        UserDefaults.standard.set(visible, forKey: Self.dogVisibleKey)
+        NotificationCenter.default.post(name: .dogVisibilityChanged, object: nil,
+                                        userInfo: ["visible": visible])
     }
 
     /// Merge fresh data with what's currently displayed, keeping today's cell
@@ -123,13 +141,21 @@ final class GipetViewModel: ObservableObject {
                 throw APIError.decode("no username or token configured")
             }
             TokenStore.shared.cachedLogin = resolvedUser.login
-            let d = try await provider.fetchContributions(login: resolvedUser.login)
+            async let contribs = provider.fetchContributions(login: resolvedUser.login)
+            // Activity mix needs a token (GraphQL); skip quietly for username-only.
+            async let activityFetch: ContributionActivity? = {
+                guard TokenStore.shared.hasToken else { return nil }
+                return try? await provider.fetchContributionActivity()
+            }()
+            let d = try await contribs
+            let act = await activityFetch
             guard loadGuard.isLatest(ticket) else { return }  // superseded — discard
             await MainActor.run {
                 let merged = Self.applyMonotonicToday(old: self.days, fresh: d)
                 self.user = resolvedUser
                 self.days = merged
                 self.stats = ContributionStats.compute(from: merged)
+                if let act { self.activity = act }
                 self.isLoading = false
                 self.lastUpdated = Date()
             }
@@ -185,29 +211,245 @@ final class GipetViewModel: ObservableObject {
     }
 
     /// Stage all, generate an AI message (or fall back), commit, and push.
+    /// Clean streak repos (e.g. Classes/streaks) auto-append the next book/journal
+    /// line first so there's always something to commit.
     func commit(repo path: String) {
         setBusy(path, true)
         Task {
-            let message: String
-            if OpenRouterClient.isConfigured {
-                let diff = GitService.diffForMessage(path)
-                if let ai = try? await OpenRouterClient.commitMessage(for: diff), !ai.isEmpty {
-                    message = ai
-                } else {
-                    message = fallbackMessage()
-                }
-            } else {
-                message = fallbackMessage()
+            // Sync first so auto-written journal isn't based on a stale tip —
+            // and so a later hard-reset doesn't wipe freshly written content.
+            if GitService.dirtyCount(path) == 0 {
+                _ = await GitService.syncToOrigin(path)
             }
-            let result = await GitService.commitAndPush(path, message: message)
+            let prepared = await prepareCommit(path: path)
+            guard prepared.error == nil else {
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) { $0.lastResult = "✗ \(prepared.error!)" }
+                }
+                return
+            }
+            let result: GitResult
+            if prepared.autoFile != nil {
+                result = await GitService.commitFile(path, file: prepared.autoFile!, message: prepared.message)
+            } else {
+                result = await GitService.commitAndPush(path, message: prepared.message)
+            }
             await MainActor.run {
+                if result.ok, let next = prepared.bookNextIndex {
+                    BookSource.setIndex(next, forRepo: path)
+                }
                 self.setBusy(path, false)
                 self.updateRepo(path) {
-                    $0.lastResult = result.ok ? "✓ \(message)" : "✗ \(result.output)"
+                    $0.lastResult = result.ok ? "✓ \(prepared.message)" : "✗ \(result.output)"
                     $0.dirtyCount = GitService.dirtyCount(path)
                 }
             }
         }
+    }
+
+    /// Sync → auto content → branch → commit → push → PR → merge.
+    func createAndMergePR(repo path: String) {
+        // Guard double-taps: two overlapping runs create conflicting OPEN PRs
+        // for the same book paragraph (seen as #7 + #8 both book:399).
+        if repos.first(where: { $0.path == path })?.isBusy == true { return }
+        setBusy(path, true)
+        Task {
+            // Hard reset would destroy local WIP (happened on desktop-dog).
+            let wip = GitService.unrelatedDirtyPaths(path)
+            if !wip.isEmpty {
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) {
+                        $0.lastResult = "✗ 로컬 수정 있음 — 커밋/스태시 후 PR 하세요 (\(wip.prefix(3).joined(separator: ", ")))"
+                    }
+                }
+                return
+            }
+            // Order matters: sync (hard reset) MUST run before we write the
+            // next book/journal line. Doing it inside commitPushPRAndMerge
+            // after prepareCommit wiped the new edits → "변경사항이 없어요".
+            if !(await GitService.syncToOrigin(path)) {
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) {
+                        $0.lastResult = "✗ origin 동기화 실패 — 네트워크/토큰을 확인해요"
+                    }
+                }
+                return
+            }
+            let prepared = await prepareCommit(path: path)
+            guard prepared.error == nil else {
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) { $0.lastResult = "✗ \(prepared.error!)" }
+                }
+                return
+            }
+            await MainActor.run {
+                self.updateRepo(path) { $0.lastResult = "PR → Approve/Comment → 머지…" }
+            }
+            let result = await GitService.commitPushPRAndMerge(path, message: prepared.message)
+            await MainActor.run {
+                if result.ok, let next = prepared.bookNextIndex {
+                    BookSource.setIndex(next, forRepo: path)
+                }
+                self.setBusy(path, false)
+                self.updateRepo(path) {
+                    if result.ok {
+                        // result.output looks like "PR#12 · Approve · https://…"
+                        $0.lastResult = "✓ \(result.output) · \(prepared.message)"
+                    } else {
+                        $0.lastResult = "✗ \(result.output)"
+                    }
+                    $0.dirtyCount = GitService.dirtyCount(path)
+                }
+            }
+        }
+    }
+
+    /// Open (then close) a GitHub issue — counts toward the Issues activity axis.
+    func createIssue(repo path: String) {
+        if repos.first(where: { $0.path == path })?.isBusy == true { return }
+        setBusy(path, true)
+        Task {
+            guard let info = GitHubPRService.repoInfo(at: path) else {
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) { $0.lastResult = "✗ GitHub origin을 찾을 수 없어요" }
+                }
+                return
+            }
+            guard TokenStore.shared.token?.isEmpty == false else {
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) { $0.lastResult = "✗ GitHub 토큰이 필요해요" }
+                }
+                return
+            }
+
+            let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm"
+            let stamp = df.string(from: Date())
+            let title = GitHubPRService.formatTitle(description: "issue \(stamp)")
+            let body = """
+            ## gipet issue
+            Auto-opened from the desktop app so it counts toward GitHub **Issues** activity.
+
+            - repo: `\(info.owner)/\(info.repo)`
+            - at: \(stamp)
+            """
+
+            await MainActor.run {
+                self.updateRepo(path) { $0.lastResult = "Issue 생성 중…" }
+            }
+
+            do {
+                let issue = try await GitHubPRService.createIssue(
+                    owner: info.owner, repo: info.repo, title: title, body: body
+                )
+                // Cleanup noise; opening already counted.
+                await GitHubPRService.closeIssue(
+                    owner: info.owner, repo: info.repo, number: issue.number
+                )
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) {
+                        $0.lastResult = "✓ Issue#\(issue.number) opened+closed"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.setBusy(path, false)
+                    self.updateRepo(path) { $0.lastResult = "✗ Issue 실패: \(error)" }
+                }
+            }
+        }
+    }
+
+    private struct PreparedCommit {
+        var message: String = ""
+        var autoFile: String? = nil       // set when we wrote gipet-journal.md
+        var bookNextIndex: Int? = nil     // advance BookSource on success
+        var error: String? = nil
+    }
+
+    /// If the repo is clean, invent content (book paragraph or journal line).
+    /// If already dirty, keep those changes and AI-label them.
+    private func prepareCommit(path: String) async -> PreparedCommit {
+        if GitService.dirtyCount(path) > 0 {
+            return PreparedCommit(message: await commitMessage(for: path))
+        }
+        // streaks-style: auto-create the next journal/book entry.
+        if BookSource.isAvailable(forRepo: path) {
+            let paras = BookSource.paragraphs(forRepo: path)
+            let idx = BookSource.currentIndex(forRepo: path)
+            guard idx < paras.count else {
+                return PreparedCommit(message: "", error: "책 끝! (\(paras.count)문단 완료)")
+            }
+            if let err = appendToJournalFile(path: path, block: paras[idx] + "\n\n") {
+                return PreparedCommit(message: "", error: err)
+            }
+            return PreparedCommit(
+                message: "book: \(idx + 1)/\(paras.count)",
+                autoFile: "gipet-journal.md",
+                bookNextIndex: idx + 1
+            )
+        }
+        let line: String
+        if OpenRouterClient.isConfigured, let ai = try? await OpenRouterClient.journalEntry(), !ai.isEmpty {
+            line = ai
+        } else {
+            line = fallbackJournalLine()
+        }
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm"
+        let entry = "- \(df.string(from: Date())) — \(line)\n"
+        let header = "# Gipet Journal 📓\n\n"
+        let fileURL = URL(fileURLWithPath: path).appendingPathComponent("gipet-journal.md")
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            if let err = writeJournal(fileURL, content: header + entry) {
+                return PreparedCommit(message: "", error: err)
+            }
+        } else if let err = appendToJournalFile(path: path, block: entry) {
+            return PreparedCommit(message: "", error: err)
+        }
+        let dfMsg = DateFormatter(); dfMsg.dateFormat = "yyyy-MM-dd"
+        return PreparedCommit(
+            message: "docs: journal \(dfMsg.string(from: Date()))",
+            autoFile: "gipet-journal.md"
+        )
+    }
+
+    private func appendToJournalFile(path: String, block: String) -> String? {
+        let fileURL = URL(fileURLWithPath: path).appendingPathComponent("gipet-journal.md")
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            return writeJournal(fileURL, content: block)
+        }
+        guard let handle = try? FileHandle(forWritingTo: fileURL) else {
+            return "could not write gipet-journal.md"
+        }
+        handle.seekToEndOfFile()
+        handle.write(block.data(using: .utf8) ?? Data())
+        try? handle.close()
+        return nil
+    }
+
+    private func writeJournal(_ url: URL, content: String) -> String? {
+        do {
+            try content.write(to: url, atomically: true, encoding: .utf8)
+            return nil
+        } catch {
+            return "could not create gipet-journal.md: \(error.localizedDescription)"
+        }
+    }
+
+    private func commitMessage(for path: String) async -> String {
+        if OpenRouterClient.isConfigured {
+            let diff = GitService.diffForMessage(path)
+            if let ai = try? await OpenRouterClient.commitMessage(for: diff), !ai.isEmpty {
+                return ai
+            }
+        }
+        return fallbackMessage()
     }
 
     private func fallbackMessage() -> String {
@@ -351,6 +593,16 @@ final class GipetViewModel: ObservableObject {
     }
 }
 
+extension GipetViewModel {
+    static let dogVisibleKey = "GitDog.visible"
+
+    static var storedDogVisible: Bool {
+        guard UserDefaults.standard.object(forKey: dogVisibleKey) != nil else { return true }
+        return UserDefaults.standard.bool(forKey: dogVisibleKey)
+    }
+}
+
 extension Notification.Name {
     static let throwBallRequested = Notification.Name("ThrowBallRequested")
+    static let dogVisibilityChanged = Notification.Name("DogVisibilityChanged")
 }
